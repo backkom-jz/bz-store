@@ -8,6 +8,9 @@ services:
       API_UPSTREAM: api:8080
       WEB_UPSTREAM: web:3000
     ports: ["127.0.0.1:8088:80"]
+    networks:
+      default:
+        ipv4_address: 172.31.255.2
     depends_on:
       api:
         condition: service_healthy
@@ -21,6 +24,7 @@ services:
     env_file: ../.env
     environment:
       APP_PORT: "8080"
+      TRUSTED_PROXIES: 172.31.255.2
       S3_ENDPOINT: http://storage:9000
       S3_ACCESS_KEY: ${S3_ACCESS_KEY}
       S3_SECRET_KEY: ${S3_SECRET_KEY}
@@ -92,3 +96,9 @@ volumes:
   redis:
   objects:
   clamav:
+networks:
+  default:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.31.255.0/24
