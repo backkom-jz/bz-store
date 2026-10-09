@@ -4,6 +4,7 @@ pub mod infrastructure;
 pub mod jobs;
 pub mod middleware;
 pub mod modules;
+pub mod openapi;
 pub mod state;
 pub fn base_router() -> axum::Router {
     foundation_routes().layer(axum::middleware::from_fn(middleware::request_id::wrap))
@@ -21,11 +22,16 @@ pub fn build_router(state: state::AppState) -> axum::Router {
         .merge(
             axum::Router::new()
                 .route("/api/v1/health/ready", axum::routing::get(ready))
+                .route(
+                    "/api/v1/openapi.json",
+                    axum::routing::get(openapi::document),
+                )
                 .merge(modules::auth::handler::router())
                 .merge(modules::catalog::handler::router())
                 .merge(modules::tutorials::handler::router())
                 .merge(modules::orders::handler::router())
                 .merge(modules::payments::handler::router())
+                .merge(modules::entitlements::handler::router())
                 .layer(axum::middleware::from_fn_with_state(
                     state.clone(),
                     middleware::security::origin,

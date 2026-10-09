@@ -24,14 +24,13 @@ pub fn router() -> Router<AppState> {
 }
 fn ip(state: &AppState, peer: ConnectInfo<SocketAddr>, headers: &HeaderMap) -> String {
     let remote = peer.0.ip();
-    if state.config.trusted_proxies.contains(&remote) {
-        if let Some(ip) = headers
+    if state.config.trusted_proxies.contains(&remote)
+        && let Some(ip) = headers
             .get("x-real-ip")
             .and_then(|v| v.to_str().ok())
             .and_then(|v| v.parse::<IpAddr>().ok())
-        {
-            return ip.to_string();
-        }
+    {
+        return ip.to_string();
     }
     remote.to_string()
 }

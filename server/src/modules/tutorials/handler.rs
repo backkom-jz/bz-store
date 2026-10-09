@@ -22,6 +22,7 @@ pub fn router() -> Router<AppState> {
     Router::new()
         .route("/api/v1/tutorials", get(list))
         .route("/api/v1/tutorials/{slug}", get(detail))
+        .route("/api/v1/tutorials/{id}/chapters/{chapter_id}", get(chapter))
         .route("/api/v1/admin/tutorials", get(admin_list).post(create))
         .route(
             "/api/v1/admin/tutorials/{id}",
@@ -35,6 +36,18 @@ pub fn router() -> Router<AppState> {
             "/api/v1/admin/tutorials/{id}/chapters/{chapter_id}",
             axum::routing::patch(update_chapter),
         )
+}
+async fn chapter(
+    State(s): State<AppState>,
+    headers: HeaderMap,
+    ApiPath((id, cid)): ApiPath<(Uuid, Uuid)>,
+) -> ApiResult<impl IntoResponse> {
+    let actor = match authenticate(&s, &headers).await {
+        Ok(user) => Some(user),
+        Err(error) if error.status == StatusCode::UNAUTHORIZED => None,
+        Err(error) => return Err(error),
+    };
+    Ok(ok(service::chapter(&s, actor.as_ref(), id, cid).await?))
 }
 async fn list(
     State(s): State<AppState>,
@@ -54,7 +67,11 @@ async fn detail(
     headers: HeaderMap,
     ApiPath(slug): ApiPath<String>,
 ) -> ApiResult<impl IntoResponse> {
-    let user = authenticate(&s, &headers).await.ok().map(|u| u.id);
+    let user = match authenticate(&s, &headers).await {
+        Ok(u) => Some(u.id),
+        Err(e) if e.status == StatusCode::UNAUTHORIZED => None,
+        Err(e) => return Err(e),
+    };
     Ok(ok(service::detail(&s, &slug, user, false).await?))
 }
 async fn admin_detail(

@@ -1,6 +1,14 @@
-use super::upload;
+use super::{
+    dto::{ApproveInput, RejectInput},
+    service, upload,
+};
 use crate::{
-    common::{ApiResult, AppError, extractors::ApiPath, ok},
+    common::{
+        ApiResult, AppError,
+        extractors::{ApiJson, ApiPath, ApiQuery},
+        ok,
+        pagination::ListQuery,
+    },
     infrastructure::cache,
     middleware::auth::{AdminUser, CurrentUser},
     state::AppState,
@@ -21,6 +29,32 @@ pub fn router() -> Router<AppState> {
         )
         .route("/api/v1/orders/{id}/payment-proof/{proof}", get(own_proof))
         .route("/api/v1/admin/payments/{proof}/proof", get(admin_proof))
+        .route("/api/v1/admin/payments", get(list))
+        .route("/api/v1/admin/payments/{proof}/approve", post(approve))
+        .route("/api/v1/admin/payments/{proof}/reject", post(reject))
+}
+async fn list(
+    State(s): State<AppState>,
+    _: AdminUser,
+    ApiQuery(q): ApiQuery<ListQuery>,
+) -> ApiResult<impl IntoResponse> {
+    Ok(ok(service::list(&s, q.validate()?).await?))
+}
+async fn approve(
+    State(s): State<AppState>,
+    AdminUser(u): AdminUser,
+    ApiPath(id): ApiPath<Uuid>,
+    ApiJson(input): ApiJson<ApproveInput>,
+) -> ApiResult<impl IntoResponse> {
+    Ok(ok(service::approve(&s, &u, id, input).await?))
+}
+async fn reject(
+    State(s): State<AppState>,
+    AdminUser(u): AdminUser,
+    ApiPath(id): ApiPath<Uuid>,
+    ApiJson(input): ApiJson<RejectInput>,
+) -> ApiResult<impl IntoResponse> {
+    Ok(ok(service::reject(&s, &u, id, &input.reason).await?))
 }
 fn multipart_error(error: axum::extract::multipart::MultipartError) -> AppError {
     if error.status() == StatusCode::PAYLOAD_TOO_LARGE {

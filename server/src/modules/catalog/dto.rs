@@ -6,7 +6,7 @@ fn tutorial() -> String {
 fn draft() -> String {
     "draft".into()
 }
-#[derive(Deserialize, Serialize)]
+#[derive(Deserialize, Serialize, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ProductInput {
     pub title: String,

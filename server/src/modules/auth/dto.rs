@@ -1,12 +1,12 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Credentials {
     pub email: String,
     pub password: String,
 }
-#[derive(Serialize, sqlx::FromRow, Clone, Debug)]
+#[derive(Serialize, sqlx::FromRow, Clone, Debug, utoipa::ToSchema)]
 pub struct PublicUser {
     pub id: Uuid,
     pub email: String,

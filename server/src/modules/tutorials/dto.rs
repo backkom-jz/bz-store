@@ -3,7 +3,7 @@ use uuid::Uuid;
 fn draft() -> String {
     "draft".into()
 }
-#[derive(Deserialize, Serialize)]
+#[derive(Deserialize, Serialize, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TutorialInput {
     pub product_id: Uuid,
@@ -14,7 +14,7 @@ pub struct TutorialInput {
     #[serde(default = "draft")]
     pub status: String,
 }
-#[derive(Deserialize, Serialize)]
+#[derive(Deserialize, Serialize, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ChapterInput {
     pub title: String,

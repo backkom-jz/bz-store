@@ -10,6 +10,25 @@ use crate::{
 };
 use serde_json::{Value, json};
 use uuid::Uuid;
+pub async fn chapter(
+    state: &AppState,
+    actor: Option<&CurrentUser>,
+    tid: Uuid,
+    cid: Uuid,
+) -> ApiResult<Value> {
+    let user = actor.map(|a| a.id);
+    // Body is selected only when authorization is true in this same SQL statement.
+    let content:Option<Value>=sqlx::query_scalar("SELECT jsonb_build_object('id',c.id,'title',c.title,'content_md',c.content_md) FROM tutorial_chapters c JOIN tutorials t ON t.id=c.tutorial_id JOIN products p ON p.id=t.product_id WHERE c.id=$1 AND t.id=$2 AND c.status='published' AND t.status='published' AND ((c.is_preview AND p.status='published') OR EXISTS(SELECT 1 FROM user_entitlements e WHERE e.user_id=$3 AND e.product_id=p.id AND e.status='active'))").bind(cid).bind(tid).bind(user).fetch_optional(&state.pool).await?;
+    if let Some(value) = content {
+        return Ok(value);
+    }
+    let public:Option<bool>=sqlx::query_scalar("SELECT c.is_preview FROM tutorial_chapters c JOIN tutorials t ON t.id=c.tutorial_id WHERE c.id=$1 AND t.id=$2 AND c.status='published' AND t.status='published'").bind(cid).bind(tid).fetch_optional(&state.pool).await?;
+    match public {
+        None | Some(true) => Err(AppError::missing()),
+        Some(false) if actor.is_none() => Err(AppError::unauthorized()),
+        _ => Err(AppError::forbidden()),
+    }
+}
 pub async fn list(state: &AppState, q: Pagination, admin: bool) -> ApiResult<Value> {
     let items:Vec<Value>=sqlx::query_scalar("SELECT to_jsonb(t)||jsonb_build_object('price_cents',p.price_cents,'product_slug',p.slug,'is_demo',p.is_demo) FROM tutorials t JOIN products p ON p.id=t.product_id WHERE ($2 OR (t.status='published' AND p.status='published')) AND position(lower($1) in lower(t.title))>0 ORDER BY t.created_at DESC,t.id DESC LIMIT $3 OFFSET $4").bind(&q.q).bind(admin).bind(q.size).bind(q.offset).fetch_all(&state.pool).await?;
     let total:i64=sqlx::query_scalar("SELECT count(*) FROM tutorials t JOIN products p ON p.id=t.product_id WHERE ($2 OR (t.status='published' AND p.status='published')) AND position(lower($1) in lower(t.title))>0").bind(&q.q).bind(admin).fetch_one(&state.pool).await?;
@@ -46,6 +65,9 @@ pub async fn save(
 ) -> ApiResult<Value> {
     let mut tx = state.pool.begin().await?;
     let existing: Option<TutorialInput> = if let Some(id) = id {
+        // Serialize editor changes on the parent before reading values to merge.
+        sqlx::query("SELECT p.id FROM products p JOIN tutorials t ON t.product_id=p.id WHERE t.id=$1 FOR UPDATE OF p")
+            .bind(id).fetch_optional(&mut *tx).await?.ok_or_else(AppError::missing)?;
         let old: Value = sqlx::query_scalar(
             "SELECT to_jsonb(t)-'id'-'created_at'-'updated_at' FROM tutorials t WHERE id=$1",
         )
