@@ -1,0 +1,9 @@
+FROM node:24-bookworm-slim AS admin
+WORKDIR /app
+COPY package.json package-lock.json ./
+COPY apps ./apps
+COPY packages ./packages
+RUN npm ci && npm run build --workspace @devstore/admin
+FROM nginx:stable-alpine
+COPY deploy/nginx/default.conf.template /etc/nginx/templates/default.conf.template
+COPY --from=admin /app/apps/admin/dist /srv/admin

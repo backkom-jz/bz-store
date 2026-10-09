@@ -1,0 +1,31 @@
+{
+  "name": "devstore",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "scripts": {
+    "test:unit": "vitest run",
+    "test:e2e": "playwright test",
+    "typecheck": "vue-tsc --noEmit -p packages/tsconfig.json && npm run typecheck --workspaces --if-present",
+    "build": "npm run build --workspaces --if-present"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.58.0",
+    "@types/node": "^24.0.0",
+    "@types/markdown-it": "^14.1.0",
+    "@vitejs/plugin-vue": "^6.0.0",
+    "@vue/test-utils": "^2.4.6",
+    "jsdom": "^26.1.0",
+    "typescript": "^5.9.0",
+    "vite": "^7.1.0",
+    "vitest": "^5.0.3",
+    "vue-tsc": "^3.1.0"
+  },
+  "overrides": {"simple-git": "^4.0.2"}
+}

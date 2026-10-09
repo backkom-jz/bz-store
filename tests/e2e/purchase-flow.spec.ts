@@ -1,0 +1,134 @@
+import {mkdirSync,writeFileSync} from 'node:fs';
+import {test,expect,adminApi,makeCourse,origin,receiptPng,credentials,hydrated} from './support';
+
+test('buyer can resubmit after rejection and then read the paid chapter',async({page,browser})=>{
+ test.setTimeout(180000);
+ const secret='PAID-SECRET-TOKEN';
+ const content=`# 已开通\n\n${secret}\n\n\`\`\`rust\nfn paid_secret() {}\n\`\`\``;
+ const admin=await adminApi();
+ const course=await makeCourse(admin,content);
+ const buyerEmail=`buyer-${crypto.randomUUID()}@example.test`;
+ const buyerPassword='Browser-test-password-42';
+ mkdirSync('.runtime',{recursive:true});
+ writeFileSync('.runtime/e2e-receipt.png',receiptPng);
+
+ await page.goto('/products/'+course.slug);
+ await hydrated(page);
+ await expect(page.getByRole('heading',{name:'浏览器验收教程'})).toBeVisible();
+ await expect(page.locator('.price').first()).toContainText('99');
+ await expect(page.getByText(secret)).toHaveCount(0);
+ await page.getByRole('button',{name:'购买教程'}).click();
+ await expect(page).toHaveURL(/\/login/);
+
+ await page.goto('/tutorials/'+course.slug);
+ await hydrated(page);
+ await page.getByRole('button',{name:/01 免费预览/}).click();
+ await expect(page.getByRole('heading',{name:'开始学习'})).toBeVisible();
+ await page.getByRole('button',{name:/02 事务与授权/}).click();
+ await expect(page.getByText('购买后解锁本章节')).toBeVisible();
+ await expect(page.getByText(secret)).toHaveCount(0);
+ const anonymous=await page.request.get(`/api/v1/tutorials/${course.tutorial.id}/chapters/${course.paid.id}`);
+ expect(anonymous.status()).toBe(401);
+
+ await page.goto('/register?returnTo='+encodeURIComponent('/products/'+course.slug));
+ await hydrated(page);
+ await page.getByLabel('邮箱').fill(buyerEmail);
+ await page.getByLabel('密码',{exact:true}).fill(buyerPassword);
+ await page.getByRole('button',{name:'创建账号'}).click();
+ await expect(page).toHaveURL(new RegExp('/products/'+course.slug));
+ await hydrated(page);
+ await page.getByRole('button',{name:'购买教程'}).click();
+ await expect(page).toHaveURL(/\/checkout\//);
+ await expect(page.getByText('TEST-ONLY-NOT-A-REAL-ACCOUNT')).toBeVisible();
+ await expect(page.locator('.price').first()).toContainText('99');
+ const orderNo=(await page.locator('.order-no').innerText()).trim();
+ expect(orderNo.length).toBeGreaterThan(20);
+ await page.getByRole('button',{name:'取消订单'}).focus();
+ await page.keyboard.press('Enter');
+ await expect(page.getByRole('button',{name:'确认取消'})).toBeVisible();
+ await page.getByRole('button',{name:'继续付款'}).click();
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);
+
+ await page.setInputFiles('#receipt','.runtime/e2e-receipt.png');
+ await page.getByRole('button',{name:'提交付款凭证'}).click();
+ await expect(page.getByRole('heading',{name:'凭证已提交，等待核实到账'})).toBeVisible({timeout:30000});
+ await page.context().setOffline(true);
+ await page.getByRole('button',{name:'刷新审核状态'}).click();
+ await expect(page.getByRole('alert')).toBeVisible();
+ await page.context().setOffline(false);
+ await page.getByRole('button',{name:'重试'}).click();
+ await expect(page.getByRole('heading',{name:'凭证已提交，等待核实到账'})).toBeVisible();
+
+ const adminContext=await browser.newContext({baseURL:origin});
+ const adminPage=await adminContext.newPage();
+ const operator=credentials();
+ await adminPage.goto('/admin/login');
+ await adminPage.getByLabel('邮箱').fill(operator.email);
+ await adminPage.getByLabel('密码').fill(operator.password);
+ await adminPage.getByRole('button',{name:'登录后台'}).click();
+ await expect(adminPage.getByRole('heading',{name:'付款审核'})).toBeVisible();
+ await adminPage.getByLabel('搜索订单号或邮箱').fill(orderNo);
+ await adminPage.getByRole('button',{name:'搜索'}).click();
+ await expect(adminPage.getByRole('button',{name:'审核'})).toBeVisible();
+ await adminPage.getByRole('button',{name:'审核'}).click();
+ await adminPage.getByLabel('驳回原因').fill('请重新上传包含金额的凭证');
+ await adminPage.getByRole('button',{name:'驳回凭证'}).click();
+ await expect(adminPage.getByText('已驳回，用户可以重新提交凭证。')).toBeVisible();
+
+ await page.reload();
+ await expect(page.getByRole('status').getByText('请重新上传包含金额的凭证')).toBeVisible();
+ await page.setInputFiles('#receipt','.runtime/e2e-receipt.png');
+ await page.getByRole('button',{name:'提交付款凭证'}).click();
+ await expect(page.getByRole('heading',{name:'凭证已提交，等待核实到账'})).toBeVisible({timeout:30000});
+
+ await adminPage.goto('/admin/payments');
+ await adminPage.getByLabel('搜索订单号或邮箱').fill(orderNo);
+ await adminPage.getByRole('button',{name:'搜索'}).click();
+ await expect(adminPage.getByRole('button',{name:'审核'})).toBeVisible();
+ await adminPage.getByRole('button',{name:'审核'}).click();
+ await expect(adminPage.getByRole('button',{name:'确认到账并开通'})).toBeDisabled();
+ await adminPage.getByLabel('实际到账金额（元）').fill('99.00');
+ await adminPage.getByLabel('收款渠道').selectOption('bank');
+ await adminPage.getByLabel('渠道交易流水号').fill('E2E-'+crypto.randomUUID());
+ await adminPage.getByLabel('已核实真实收款记录').check();
+ await expect(adminPage.getByRole('button',{name:'确认到账并开通'})).toBeEnabled();
+ await adminPage.getByRole('button',{name:'确认到账并开通'}).click();
+ await expect(adminPage.getByText('已核实到账，教程已开通。')).toBeVisible();
+
+ await page.reload();
+ await expect(page.getByRole('heading',{name:'教程已开通'})).toBeVisible();
+ const orderId=new URL(page.url()).pathname.split('/').pop();
+ const orderResponse=await page.request.get('/api/v1/orders/'+orderId);
+ expect(orderResponse.ok()).toBeTruthy();
+ const order=(await orderResponse.json()).data;
+ expect(order.amount_cents).toBe(9900);
+ expect(order.status).toBe('completed');
+ const library=await page.request.get('/api/v1/me/library');
+ expect((await library.json()).data.total).toBe(1);
+
+ await page.goto('/tutorials/'+course.slug);
+ await hydrated(page);
+ await page.getByRole('button',{name:/02 事务与授权/}).click();
+ await expect(page.getByText(secret)).toBeVisible();
+ await expect(page.getByText('fn paid_secret')).toBeVisible();
+
+ const other=await browser.newContext({baseURL:origin});
+ const otherPage=await other.newPage();
+ await otherPage.goto('/register');
+ await hydrated(otherPage);
+ await otherPage.getByLabel('邮箱').fill(`other-${crypto.randomUUID()}@example.test`);
+ await otherPage.getByLabel('密码',{exact:true}).fill(buyerPassword);
+ await otherPage.getByRole('button',{name:'创建账号'}).click();
+ await expect(otherPage.getByRole('button',{name:'退出登录'})).toBeVisible();
+ const otherChapter=await otherPage.request.get(`/api/v1/tutorials/${course.tutorial.id}/chapters/${course.paid.id}`);
+ expect(otherChapter.status()).toBe(403);
+ expect(await otherChapter.text()).not.toContain(secret);
+ await otherPage.goto('/tutorials/'+course.slug);
+ await hydrated(otherPage);
+ await otherPage.getByRole('button',{name:/02 事务与授权/}).click();
+ await expect(otherPage.getByText('购买后解锁本章节')).toBeVisible();
+ await expect(otherPage.getByText(secret)).toHaveCount(0);
+ await admin.api.dispose();
+ await adminContext.close();
+ await other.close();
+});

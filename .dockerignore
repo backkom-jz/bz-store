@@ -1,0 +1,13 @@
+.git
+target
+node_modules
+.runtime
+.nuxt
+.output
+dist
+test-results
+playwright-report
+**/*.log
+.env
+.env.*
+!.env.example

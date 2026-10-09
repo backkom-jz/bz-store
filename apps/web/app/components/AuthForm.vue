@@ -1,0 +1,10 @@
+<script setup lang="ts">
+import {safeReturnTo} from '@devstore/api-client';import {ArrowRight,LockKeyhole} from '@lucide/vue';
+const props=defineProps<{register?:boolean}>();const {login}=useSession();const route=useRoute();
+const ready=ref(false);onMounted(()=>ready.value=true);const email=ref('');const password=ref('');const pending=ref(false);const error=ref('');
+const returnTo=computed(()=>safeReturnTo(route.query.returnTo));
+async function submit(){pending.value=true;error.value='';try{await login(email.value,password.value,props.register);password.value='';await navigateTo(returnTo.value);}catch(e){error.value=e instanceof Error?e.message:'请求失败，请重试';}finally{pending.value=false;}}
+</script>
+<template><div class="container"><div class="auth-page panel"><span class="eyebrow">YOUR NEXT CHAPTER</span><h1>{{ register?'从这里，开启下一次进阶':'欢迎回到 DevStore' }}</h1><p class="muted" style="font-size:14px;margin-bottom:28px">{{ register?'创建账号，收藏属于你的技术知识。':'登录账号，继续你的学习与实践。' }}</p>
+<form @submit.prevent="submit"><fieldset :disabled="!ready" style="border:0;padding:0;margin:0"><div class="field"><label for="email">邮箱</label><input id="email" v-model="email" type="email" maxlength="255" autocomplete="email" placeholder="you@example.com" required></div><div class="field"><label for="password">密码</label><input id="password" v-model="password" type="password" :autocomplete="register?'new-password':'current-password'" minlength="12" maxlength="128" required><small v-if="register" class="muted">12–128 个字符，建议包含字母、数字和符号。</small></div><p v-if="error" role="alert" class="error">{{ error }}</p><button class="btn" :disabled="pending">{{ pending?'正在处理…':register?'创建账号':'登录' }}<ArrowRight :size="16"/></button></fieldset></form>
+<p class="auth-switch muted">{{ register?'已经有账号？':'还没有账号？' }} <NuxtLink class="text-link" :to="{path:register?'/login':'/register',query:{returnTo}}">{{ register?'去登录':'立即注册' }}</NuxtLink></p><div class="divider"/><p class="row muted" style="font-size:11px;margin:0"><LockKeyhole :size="14"/> 登录后可查看订单和已购教程</p></div></div></template>

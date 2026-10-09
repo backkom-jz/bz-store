@@ -19,7 +19,19 @@ pub async fn create_bucket(config: &Config) -> ApiResult<()> {
             &object_store::path::Path::from(""),
             std::time::Duration::from_secs(60),
         )
-        .await?;
+        .await
+        .map_err(|error| {
+            let detail = error.to_string();
+            let detail = detail.split('?').next().unwrap_or(&detail);
+            crate::common::AppError::new(
+                axum::http::StatusCode::SERVICE_UNAVAILABLE,
+                "SERVICE_UNAVAILABLE",
+                format!(
+                    "对象存储签名失败: {}",
+                    detail.chars().take(160).collect::<String>()
+                ),
+            )
+        })?;
     let response = reqwest::Client::builder()
         .no_proxy()
         .timeout(std::time::Duration::from_secs(10))
@@ -28,9 +40,31 @@ pub async fn create_bucket(config: &Config) -> ApiResult<()> {
         .put(url)
         .send()
         .await
-        .map_err(|_| crate::common::AppError::unavailable())?;
+        .map_err(|error| {
+            crate::common::AppError::new(
+                axum::http::StatusCode::SERVICE_UNAVAILABLE,
+                "SERVICE_UNAVAILABLE",
+                format!("无法连接对象存储: {}", error.without_url()),
+            )
+        })?;
     if !response.status().is_success() && response.status() != reqwest::StatusCode::CONFLICT {
-        return Err(crate::common::AppError::unavailable());
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        let code = body
+            .split("<Code>")
+            .nth(1)
+            .and_then(|value| value.split("</Code>").next())
+            .unwrap_or("unknown");
+        let message = body
+            .split("<Message>")
+            .nth(1)
+            .and_then(|value| value.split("</Message>").next())
+            .unwrap_or("");
+        return Err(crate::common::AppError::new(
+            axum::http::StatusCode::SERVICE_UNAVAILABLE,
+            "SERVICE_UNAVAILABLE",
+            format!("对象存储初始化失败（HTTP {status} {code}）{message}"),
+        ));
     }
     Ok(())
 }

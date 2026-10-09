@@ -1,0 +1,13 @@
+<script setup lang="ts">
+import type {Page,ProductSummary,Category} from '@devstore/shared-types';import {Search,ArrowRight} from '@lucide/vue';
+const props=defineProps<{tutorials?:boolean}>();const api=useApi();const route=useRoute();const q=ref(String(route.query.q||''));const category=ref(String(route.query.category||''));const page=ref(1);const search=ref(q.value);
+const query=computed(()=>new URLSearchParams({q:search.value,category:category.value,page:String(page.value),page_size:'9'}).toString());
+const {data,error,status,refresh}=await useAsyncData(()=> 'catalog:'+props.tutorials+':'+query.value,()=>api.request<Page<ProductSummary>>('/products?'+query.value));
+const {data:categories}=await useAsyncData('categories',()=>api.request<Category[]>('/categories'));
+function find(){search.value=q.value.trim();page.value=1;}
+watch(category,()=>page.value=1);
+</script>
+<template><div class="container"><div class="page-head"><div class="eyebrow">{{ tutorials?'LEARN BY BUILDING':'THE DEVELOPER COLLECTION' }}</div><h1>{{ tutorials?'教程中心':'商品商城' }}</h1><p class="muted">从基础原理到真实项目，找到适合你的下一步。</p></div>
+<form class="catalog-toolbar" role="search" @submit.prevent="find"><div class="search-field"><Search :size="17"/><label for="search" class="sr-only">搜索教程</label><input id="search" v-model="q" type="search" placeholder="搜索 Rust、Vue、工程实践…" maxlength="100"></div><label for="category" class="sr-only">商品分类</label><select id="category" v-model="category"><option value="">全部分类</option><option v-for="item in categories" :key="item.id" :value="item.slug">{{ item.name }}</option></select><button class="btn secondary">搜索 <ArrowRight :size="15"/></button></form>
+<ApiFeedback :pending="status==='pending'" :error="error" @retry="refresh"/><template v-if="data&&!error"><div class="spread" style="margin-bottom:18px"><span class="muted" style="font-size:12px">共 {{ data.total }} 个教程</span><span class="badge">按最新发布排序</span></div><div v-if="data.items.length" class="product-grid"><ProductCard v-for="item in data.items" :key="item.id" :product="item"/></div><div v-else class="empty"><h2 style="font-size:19px;color:var(--ink)">没有找到相关教程</h2><p>试试其他关键词，或查看全部内容。</p><button class="btn secondary" @click="q='';search='';category='';page=1">查看全部</button></div><div v-if="data.total>9" class="pagination"><button class="btn secondary small" :disabled="page===1" @click="page--">上一页</button><span class="muted">{{ page }} / {{ Math.ceil(data.total/9) }}</span><button class="btn secondary small" :disabled="page*9>=data.total" @click="page++">下一页</button></div></template>
+</div></template>

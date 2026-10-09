@@ -262,7 +262,7 @@ await expect(page.getByText('已完成', { exact: true })).toBeVisible()
 
 **Interfaces:** `bash scripts/dev.sh` 检查本地配置后启动 devstore；`bash scripts/check.sh` 运行 fmt、clippy、单元与真实数据库集成测试、前端类型检查和构建；`bash scripts/test-e2e.sh` 使用独立测试项目运行 Chromium 桌面和移动端场景。
 
-- [ ] 编写完整 Playwright 场景：管理员通过 API/页面发布真实测试商品 → 用户注册 → 预览成功且付费正文被拒 → 下单 → 上传 → 管理员驳回 → 用户重提 → 管理员核实通过 → 订单完成 → 用户阅读付费正文。测试独立创建管理员和虚构测试收款配置，绝不连接真实资金账户。
+- [x] 编写完整 Playwright 场景：管理员通过 API/页面发布真实测试商品 → 用户注册 → 预览成功且付费正文被拒 → 下单 → 上传 → 管理员驳回 → 用户重提 → 管理员核实通过 → 订单完成 → 用户阅读付费正文。测试独立创建管理员和虚构测试收款配置，绝不连接真实资金账户。
 
 ```ts
 expect(order.amount_cents).toBe(9900)
@@ -271,13 +271,13 @@ expect(grantedEntitlements).toBe(1)
 expect(otherUserChapterResponse.status()).toBe(403)
 ```
 
-- [ ] 运行 `bash scripts/test-e2e.sh`，确认缺少同源路由、资源路径或交付连接时失败；不得把 API mock 成功作为此处的通过依据。
-- [ ] 完成 Nginx 路由：/api/ → Axum、/admin/ → 管理静态文件及 SPA fallback、/ → Nuxt Node SSR；限制请求体、禁用私有响应缓存、配置 CSP 与安全头。覆盖 /admin 深链接刷新、Nuxt 资源路径和 multipart 错误响应。所有服务仅内部网络，唯一宿主入口 127.0.0.1:8088。
-- [ ] 提供配置、构建和运行文档：生成随机密钥、初始化管理员、显式 seed-demo、设置收款、启动/停止、日志查看和健康检查。收款信息未配置时页面明确说明不可购买；不得宣称可直接用于公网生产经营。
-- [ ] CI 使用锁定依赖，依次执行 `cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、Rust 测试、TS 类型检查、前端单元测试、双方构建和购买链路 E2E；只保留诊断所需测试工件，测试数据使用虚构用户和凭证。
-- [ ] 检查 390px 和 1440px 视口布局、键盘操作、长订单号、代码块、慢请求和断网恢复；测试 A 用户读取后 B 用户登录、SSR 两用户并发请求及退出后浏览器后退，三种情况下都不能看到前用户正文。
-- [ ] 运行 `bash scripts/check.sh` 和 `bash scripts/test-e2e.sh`，记录实际命令、时间、通过数及失败原因到 verification 文档；没有执行的项明确为未验证。检查 Git diff 无密钥或测试用户上传，并完成独立代码审查与问题修复。
-- [ ] 仅当设计稿首阶段 14 条验收全部具备证据时，提交 `git commit -m "test: verify tutorial purchase flow and document local deployment"`，报告入口地址、操作方式和完整 V1.0 尚未覆盖的项目。提交不等于推送、合并或公网部署。
+- [x] 运行 `bash scripts/test-e2e.sh`，确认缺少同源路由、资源路径或交付连接时失败；不得把 API mock 成功作为此处的通过依据。
+- [x] 完成 Nginx 路由：/api/ → Axum、/admin/ → 管理静态文件及 SPA fallback、/ → Nuxt Node SSR；限制请求体、禁用私有响应缓存、配置 CSP 与安全头。覆盖 /admin 深链接刷新、Nuxt 资源路径和 multipart 错误响应。所有服务仅内部网络，唯一宿主入口 127.0.0.1:8088。
+- [x] 提供配置、构建和运行文档：生成随机密钥、初始化管理员、显式 seed-demo、设置收款、启动/停止、日志查看和健康检查。收款信息未配置时页面明确说明不可购买；不得宣称可直接用于公网生产经营。
+- [x] CI 使用锁定依赖，依次执行 `cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、Rust 测试、TS 类型检查、前端单元测试、双方构建和购买链路 E2E；只保留诊断所需测试工件，测试数据使用虚构用户和凭证。
+- [x] 检查 390px 和 1440px 视口布局、键盘操作、长订单号、代码块、慢请求和断网恢复；测试 A 用户读取后 B 用户登录、SSR 两用户并发请求及退出后浏览器后退，三种情况下都不能看到前用户正文。
+- [x] 运行 `bash scripts/check.sh` 和 `bash scripts/test-e2e.sh`，记录实际命令、时间、通过数及失败原因到 verification 文档；没有执行的项明确为未验证。检查 Git diff 无密钥或测试用户上传，并完成独立代码审查与问题修复。
+- [x] 仅当设计稿首阶段 14 条验收全部具备证据时，提交 `git commit -m "test: verify tutorial purchase flow and document local deployment"`，报告入口地址、操作方式和完整 V1.0 尚未覆盖的项目。提交不等于推送、合并或公网部署。证据见 docs/verification/tutorial-checkout.md。GitHub Actions 本身未在远端执行。
 
 ## 计划自查与覆盖映射
 
@@ -293,7 +293,7 @@ expect(otherUserChapterResponse.status()).toBe(403)
 | SSR、Markdown 安全、响应式和换用户隔离 | 7、9 |
 | 真实 PostgreSQL 并发验证与桌面/移动端 E2E | 1–6、9 |
 
-零元权益函数在 Task 4 首次实现，Task 6 复用；payments 的凭证上传在 Task 5 实现，Task 6 扩展审核。涉及未来数字商品/服务、退款、密码重置和管理员 MFA 的字段可保留，但不将这些功能标记为 A 范围已交付。当前所有任务均待执行。
+零元权益函数在 Task 4 首次实现，Task 6 复用；payments 的凭证上传在 Task 5 实现，Task 6 扩展审核。涉及未来数字商品/服务、退款、密码重置和管理员 MFA 的字段可保留，但不将这些功能标记为 A 范围已交付。Task 9 的本地检查、浏览器验收和 Compose 启动已有记录；GitHub Actions 未在远端执行。
 
 ## 核实过的官方参考
 

@@ -62,10 +62,27 @@ pub async fn create(
             sqlx::query_scalar("SELECT value_json FROM site_settings WHERE key='manual_payment'")
                 .fetch_optional(&mut *tx)
                 .await?
-                .ok_or_else(AppError::unavailable)?;
-        let config: PaymentConfig =
-            serde_json::from_value(value.clone()).map_err(|_| AppError::unavailable())?;
-        config.validate().map_err(|_| AppError::unavailable())?;
+                .ok_or_else(|| {
+                    AppError::new(
+                        axum::http::StatusCode::SERVICE_UNAVAILABLE,
+                        "PAYMENT_UNAVAILABLE",
+                        "尚未配置收款信息，暂时不能购买",
+                    )
+                })?;
+        let config: PaymentConfig = serde_json::from_value(value.clone()).map_err(|_| {
+            AppError::new(
+                axum::http::StatusCode::SERVICE_UNAVAILABLE,
+                "PAYMENT_UNAVAILABLE",
+                "尚未配置收款信息，暂时不能购买",
+            )
+        })?;
+        config.validate().map_err(|_| {
+            AppError::new(
+                axum::http::StatusCode::SERVICE_UNAVAILABLE,
+                "PAYMENT_UNAVAILABLE",
+                "尚未配置收款信息，暂时不能购买",
+            )
+        })?;
         value
     } else {
         json!({})

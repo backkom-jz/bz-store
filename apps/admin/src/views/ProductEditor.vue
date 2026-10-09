@@ -1,0 +1,189 @@
+<script setup lang="ts">
+import type { Category, Page, ProductStatus, ProductSummary, TutorialSummary } from '@devstore/shared-types';
+import { parseCents } from '@devstore/ui/format';
+import { computed, ref, watch } from 'vue';
+import { RouterLink, useRoute, useRouter } from 'vue-router';
+import { centsToYuanInput, slugError } from '../catalog';
+import { api } from '../session';
+
+const route = useRoute();
+const router = useRouter();
+const creating = computed(() => route.name === 'product-new');
+const product = ref<ProductSummary | null>(null);
+const categories = ref<Category[]>([]);
+const tutorialId = ref<string | null>(null);
+const title = ref('');
+const slug = ref('');
+const price = ref('');
+const description = ref('');
+const status = ref<ProductStatus>('draft');
+const categoryId = ref('');
+const pending = ref(false);
+const saving = ref(false);
+const error = ref('');
+const notice = ref('');
+
+const priceHint = computed(() => {
+  if (!price.value.trim()) return '按元填写，保存时换算为整数分。';
+  try {
+    return `将按 ${parseCents(price.value.trim())} 分保存。`;
+  } catch (reason) {
+    return reason instanceof Error ? reason.message : '金额无效';
+  }
+});
+
+async function findTutorial(productId: string) {
+  for (let page = 1; page <= 20; page += 1) {
+    const data = await api.request<Page<TutorialSummary>>('/admin/tutorials?page=' + page + '&page_size=100');
+    const found = data.items.find((item) => item.product_id === productId);
+    if (found) return found.id;
+    if (page * data.page_size >= data.total) return null;
+  }
+  return null;
+}
+
+async function load() {
+  error.value = '';
+  notice.value = '';
+  tutorialId.value = null;
+  product.value = null;
+  pending.value = true;
+  try {
+    try {
+      categories.value = await api.request<Category[]>('/categories');
+    } catch {
+      categories.value = [];
+    }
+    if (creating.value) {
+      title.value = '';
+      slug.value = '';
+      price.value = '';
+      description.value = '';
+      status.value = 'draft';
+      categoryId.value = '';
+      return;
+    }
+    const row = await api.request<ProductSummary>('/admin/products/' + route.params.id);
+    product.value = row;
+    title.value = row.title;
+    slug.value = row.slug;
+    price.value = centsToYuanInput(row.price_cents);
+    description.value = row.description;
+    status.value = row.status;
+    categoryId.value = row.category_id ?? '';
+    tutorialId.value = await findTutorial(row.id);
+  } catch (reason) {
+    error.value = reason instanceof Error ? reason.message : '加载失败，请重试';
+  } finally {
+    pending.value = false;
+  }
+}
+
+async function save() {
+  const problem = slugError(slug.value);
+  if (problem) {
+    error.value = problem;
+    return;
+  }
+  let priceCents = 0;
+  try {
+    priceCents = parseCents(price.value.trim());
+  } catch (reason) {
+    error.value = reason instanceof Error ? reason.message : '金额无效';
+    return;
+  }
+  if (!title.value.trim()) {
+    error.value = '请填写商品标题';
+    return;
+  }
+  saving.value = true;
+  error.value = '';
+  notice.value = '';
+  const body = {
+    title: title.value.trim(),
+    slug: slug.value.trim(),
+    type: product.value?.type ?? 'tutorial',
+    price_cents: priceCents,
+    description: description.value,
+    status: creating.value ? 'draft' : status.value,
+    category_id: categoryId.value || null,
+  };
+  try {
+    const saved = await api.request<ProductSummary>(creating.value ? '/admin/products' : '/admin/products/' + route.params.id, {
+      method: creating.value ? 'POST' : 'PATCH',
+      body,
+    });
+    notice.value = '商品已保存。';
+    if (creating.value) {
+      await router.replace('/products/' + saved.id);
+      return;
+    }
+    product.value = saved;
+    status.value = saved.status;
+    price.value = centsToYuanInput(saved.price_cents);
+  } catch (reason) {
+    error.value = reason instanceof Error ? reason.message : '保存失败，请重试';
+  } finally {
+    saving.value = false;
+  }
+}
+
+watch(() => route.fullPath, () => void load(), { immediate: true });
+</script>
+
+<template>
+  <p><RouterLink class="text-link" to="/products">返回商品列表</RouterLink></p>
+  <header class="page-head">
+    <h1>{{ creating ? '新建商品' : '编辑商品' }}</h1>
+    <p class="muted">本阶段只售卖图文教程。价格以整数分保存，不使用浮点换算。</p>
+  </header>
+  <p v-if="pending" class="muted" role="status">正在加载…</p>
+  <div v-else-if="error && !product && !creating" class="error" role="alert">
+    <p>{{ error }}</p>
+    <button class="btn secondary small" type="button" @click="load">重试</button>
+  </div>
+  <form v-else class="panel editor" @submit.prevent="save">
+    <p v-if="product?.is_demo" class="badge amber">示例内容</p>
+    <div class="field">
+      <label for="title">标题</label>
+      <input id="title" v-model="title" maxlength="200" required :disabled="saving">
+    </div>
+    <div class="field">
+      <label for="slug">slug</label>
+      <input id="slug" v-model="slug" maxlength="220" required autocomplete="off" spellcheck="false" :disabled="saving">
+      <p class="hint">小写字母、数字和单连字符，例如 rust-axum-starter。</p>
+    </div>
+    <div class="field">
+      <label for="price">价格（元）</label>
+      <input id="price" v-model="price" inputmode="decimal" autocomplete="off" required placeholder="99.00" :disabled="saving">
+      <p class="hint">{{ priceHint }}</p>
+    </div>
+    <div class="field">
+      <label for="category">分类</label>
+      <select id="category" v-model="categoryId" :disabled="saving">
+        <option value="">不分类</option>
+        <option v-for="category in categories" :key="category.id" :value="category.id">{{ category.name }}</option>
+      </select>
+    </div>
+    <div class="field">
+      <label for="description">介绍</label>
+      <textarea id="description" v-model="description" maxlength="20000" :disabled="saving"></textarea>
+    </div>
+    <div v-if="!creating" class="field">
+      <label for="status">状态</label>
+      <select id="status" v-model="status" :disabled="saving">
+        <option value="draft">草稿</option>
+        <option value="published">已发布</option>
+        <option value="archived">已下架</option>
+      </select>
+      <p class="hint">发布前，关联教程和至少一个非预览章节都需要是已发布。</p>
+    </div>
+    <p v-if="notice" class="notice" role="status">{{ notice }}</p>
+    <p v-if="error" class="error" role="alert">{{ error }}</p>
+    <div class="form-actions">
+      <button class="btn" type="submit" :disabled="saving">{{ saving ? '正在保存…' : '保存商品' }}</button>
+      <RouterLink v-if="tutorialId" class="btn secondary" :to="'/tutorials/' + tutorialId">编辑教程章节</RouterLink>
+      <RouterLink v-else-if="product" class="btn secondary" :to="{ path: '/tutorials/new', query: { product: product.id } }">创建教程</RouterLink>
+    </div>
+  </form>
+</template>
