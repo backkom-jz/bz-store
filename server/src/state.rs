@@ -14,6 +14,7 @@ pub struct AppState {
     pub storage: Arc<object_store::aws::AmazonS3>,
     pub scanner: Scanner,
     pub password_slots: Arc<tokio::sync::Semaphore>,
+    pub upload_slots: Arc<tokio::sync::Semaphore>,
 }
 impl AppState {
     pub async fn connect(config: Config) -> ApiResult<Self> {
@@ -43,6 +44,7 @@ impl AppState {
             storage,
             scanner,
             password_slots: Arc::new(tokio::sync::Semaphore::new(4)),
+            upload_slots: Arc::new(tokio::sync::Semaphore::new(4)),
         })
     }
     pub async fn migrate(&self) -> ApiResult<()> {

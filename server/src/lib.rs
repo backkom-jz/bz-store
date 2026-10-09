@@ -25,6 +25,7 @@ pub fn build_router(state: state::AppState) -> axum::Router {
                 .merge(modules::catalog::handler::router())
                 .merge(modules::tutorials::handler::router())
                 .merge(modules::orders::handler::router())
+                .merge(modules::payments::handler::router())
                 .layer(axum::middleware::from_fn_with_state(
                     state.clone(),
                     middleware::security::origin,

@@ -23,17 +23,48 @@ pub struct Course {
     pub slug: String,
 }
 impl TestApp {
+    pub async fn proof(&self, buyer: &Session, order: Uuid) -> Uuid {
+        let mut bytes = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::new_rgb8(8, 8)
+            .write_to(&mut bytes, image::ImageFormat::Png)
+            .unwrap();
+        let r = self.upload(buyer, order, &bytes.into_inner()).await;
+        assert_eq!(r.status, 201, "{}", r.body);
+        Uuid::parse_str(r.body["data"]["id"].as_str().unwrap()).unwrap()
+    }
     pub async fn order(&self, buyer: &Session, product: Uuid) -> Uuid {
-        let r=self.request("POST","/api/v1/orders",json!({"product_id":product,"quantity":1}),Some(buyer),&[("idempotency-key",&Uuid::new_v4().to_string())]).await;
-        assert_eq!(r.status,201,"{}",r.body);
+        let r = self
+            .request(
+                "POST",
+                "/api/v1/orders",
+                json!({"product_id":product,"quantity":1}),
+                Some(buyer),
+                &[("idempotency-key", &Uuid::new_v4().to_string())],
+            )
+            .await;
+        assert_eq!(r.status, 201, "{}", r.body);
         Uuid::parse_str(r.body["data"]["id"].as_str().unwrap()).unwrap()
     }
     pub async fn upload(&self, buyer: &Session, order: Uuid, bytes: &[u8]) -> TestResponse {
-        let boundary="devstore-test-boundary";
+        let boundary = "devstore-test-boundary";
         let mut body=format!("--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"receipt.png\"\r\nContent-Type: image/png\r\n\r\n").into_bytes();
         body.extend_from_slice(bytes);
         body.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
-        self.raw(Request::builder().method("POST").uri(format!("/api/v1/orders/{order}/payment-proof")).header("origin",&self.state.config.site_url).header("cookie",&buyer.cookie).header("x-csrf-token",&buyer.csrf).header("content-type",format!("multipart/form-data; boundary={boundary}")).body(Body::from(body)).unwrap()).await
+        self.raw(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/api/v1/orders/{order}/payment-proof"))
+                .header("origin", &self.state.config.site_url)
+                .header("cookie", &buyer.cookie)
+                .header("x-csrf-token", &buyer.csrf)
+                .header(
+                    "content-type",
+                    format!("multipart/form-data; boundary={boundary}"),
+                )
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await
     }
     pub async fn course(&self, admin: &Session, price: i64) -> Course {
         let slug = format!("course-{}", Uuid::new_v4().simple());

@@ -14,6 +14,21 @@ async fn main() {
         .await
         .expect("dependencies unavailable");
     state.migrate().await.expect("database migration failed");
+    let cleanup = state.clone();
+    tokio::spawn(async move {
+        let mut timer = tokio::time::interval(std::time::Duration::from_secs(3600));
+        loop {
+            timer.tick().await;
+            if let Err(error) = devstore_server::jobs::cleanup_uploads::cleanup_batch(
+                &cleanup,
+                time::OffsetDateTime::now_utc() - time::Duration::days(1),
+            )
+            .await
+            {
+                tracing::error!(code = error.code, "upload cleanup failed");
+            }
+        }
+    });
     let jobs = state.clone();
     tokio::spawn(async move {
         let mut timer = tokio::time::interval(std::time::Duration::from_secs(60));
