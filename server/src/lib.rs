@@ -21,6 +21,8 @@ pub fn build_router(state: state::AppState) -> axum::Router {
             axum::Router::new()
                 .route("/api/v1/health/ready", axum::routing::get(ready))
                 .merge(modules::auth::handler::router())
+                .merge(modules::catalog::handler::router())
+                .merge(modules::tutorials::handler::router())
                 .layer(axum::middleware::from_fn_with_state(
                     state.clone(),
                     middleware::security::origin,
