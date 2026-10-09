@@ -21,6 +21,16 @@ enum Command {
         password_stdin: bool,
     },
     InitStorage,
+    SeedDemo {
+        #[arg(long)]
+        admin_email: String,
+    },
+    PaymentConfig {
+        #[arg(long)]
+        admin_email: String,
+        #[arg(long)]
+        file: std::path::PathBuf,
+    },
 }
 #[tokio::main]
 async fn main() {
@@ -56,6 +66,40 @@ async fn run(cli: Cli) -> ApiResult<()> {
             println!("Admin created: {} ({})", user.email, user.id);
         }
         Command::InitStorage => unreachable!(),
+        Command::SeedDemo { admin_email } => {
+            let actor = operator(&state, &admin_email).await?;
+            let product =
+                devstore_server::modules::admin::operations::seed_demo(&state, &actor).await?;
+            println!("Demo tutorial ready: {}", product["slug"]);
+        }
+        Command::PaymentConfig { admin_email, file } => {
+            let actor = operator(&state, &admin_email).await?;
+            let bytes = std::fs::read(file)?;
+            let config = serde_json::from_slice(&bytes)
+                .map_err(|_| AppError::invalid("付款配置 JSON 无效"))?;
+            devstore_server::modules::admin::operations::payment_config(&state, &actor, config)
+                .await?;
+            println!("Payment configuration saved and audited");
+        }
     }
     Ok(())
+}
+async fn operator(
+    state: &AppState,
+    email: &str,
+) -> ApiResult<devstore_server::middleware::auth::CurrentUser> {
+    let id: uuid::Uuid = sqlx::query_scalar("SELECT id FROM users WHERE email=$1 AND status=1")
+        .bind(email.trim().to_lowercase())
+        .fetch_optional(&state.pool)
+        .await?
+        .ok_or_else(AppError::forbidden)?;
+    let user = service::public_user(state, id).await?;
+    if !user.is_admin {
+        return Err(AppError::forbidden());
+    }
+    Ok(devstore_server::middleware::auth::CurrentUser {
+        id,
+        session_id: uuid::Uuid::nil(),
+        is_admin: true,
+    })
 }

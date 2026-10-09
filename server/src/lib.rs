@@ -1,6 +1,7 @@
 pub mod common;
 pub mod config;
 pub mod infrastructure;
+pub mod jobs;
 pub mod middleware;
 pub mod modules;
 pub mod state;
@@ -23,6 +24,7 @@ pub fn build_router(state: state::AppState) -> axum::Router {
                 .merge(modules::auth::handler::router())
                 .merge(modules::catalog::handler::router())
                 .merge(modules::tutorials::handler::router())
+                .merge(modules::orders::handler::router())
                 .layer(axum::middleware::from_fn_with_state(
                     state.clone(),
                     middleware::security::origin,

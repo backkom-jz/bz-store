@@ -3,6 +3,35 @@ use serde_json::{Value, json};
 use support::TestApp;
 
 #[tokio::test]
+async fn it_demo_seed_is_explicit_idempotent_and_has_no_payment_account() {
+    let app = TestApp::start().await;
+    let admin = app.admin().await;
+    let actor = devstore_server::middleware::auth::CurrentUser {
+        id: admin.id,
+        session_id: uuid::Uuid::new_v4(),
+        is_admin: true,
+    };
+    let a = devstore_server::modules::admin::operations::seed_demo(&app.state, &actor)
+        .await
+        .unwrap();
+    let b = devstore_server::modules::admin::operations::seed_demo(&app.state, &actor)
+        .await
+        .unwrap();
+    assert_eq!(a["id"], b["id"]);
+    assert_eq!(a["price_cents"], 9900);
+    assert_eq!(a["is_demo"], true);
+    let count: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM site_settings WHERE key='manual_payment'")
+            .fetch_one(&app.state.pool)
+            .await
+            .unwrap();
+    assert_eq!(count, 0);
+    let t = app.get("/api/v1/tutorials/rust-axum-starter").await;
+    assert_eq!(t.status, 200);
+    assert_eq!(t.body["data"]["chapters"].as_array().unwrap().len(), 2);
+}
+
+#[tokio::test]
 async fn it_catalog_visibility_and_paid_body_is_not_in_metadata() {
     let app = TestApp::start().await;
     let admin = app.admin().await;

@@ -14,6 +14,21 @@ async fn main() {
         .await
         .expect("dependencies unavailable");
     state.migrate().await.expect("database migration failed");
+    let jobs = state.clone();
+    tokio::spawn(async move {
+        let mut timer = tokio::time::interval(std::time::Duration::from_secs(60));
+        loop {
+            timer.tick().await;
+            if let Err(error) = devstore_server::jobs::expire_orders::expire_batch(
+                &jobs,
+                time::OffsetDateTime::now_utc(),
+            )
+            .await
+            {
+                tracing::error!(code = error.code, "order expiry failed");
+            }
+        }
+    });
     let listener = tokio::net::TcpListener::bind(("0.0.0.0", port))
         .await
         .unwrap();
