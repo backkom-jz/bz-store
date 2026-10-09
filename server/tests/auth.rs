@@ -42,6 +42,16 @@ async fn it_auth_lifecycle() {
         )
         .await;
     assert_eq!(bad.status, 401);
+    let unknown = app
+        .request(
+            "POST",
+            "/api/v1/auth/login",
+            json!({"email":"missing@example.test","password":"wrong-password-123"}),
+            None,
+            &[],
+        )
+        .await;
+    assert_eq!(unknown.status, 401);
     let good = app
         .request(
             "POST",

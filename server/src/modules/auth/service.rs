@@ -11,6 +11,11 @@ use sha2::{Digest, Sha256};
 use sqlx::Row;
 use time::OffsetDateTime;
 use uuid::Uuid;
+
+// Precomputed with Argon2id (m=19_456, t=2, p=1). Unknown-account logins
+// verify this fixed hash so they perform one Argon2 verification, like a
+// known-account login, without hashing a new dummy password on every request.
+const DUMMY_PASSWORD_HASH: &str = "$argon2id$v=19$m=19456,t=2,p=1$ZGV2c3RvcmUtc3RhdGljLXNhbHQtMjAyNg$ilBBvdl/BXN+P1wFQ2FL30I+yczbAb8XVgebaZyIWyw";
 pub fn digest(value: &str) -> String {
     hex::encode(Sha256::digest(value.as_bytes()))
 }
@@ -123,10 +128,10 @@ pub async fn login(state: &AppState, input: Credentials) -> ApiResult<SessionRes
         .bind(email)
         .fetch_optional(&state.pool)
         .await?;
-    // Verify an Argon2 hash even for unknown accounts to avoid a fast email oracle.
+    // Verify one Argon2 hash even for unknown accounts to avoid a fast email oracle.
     let hash = match &row {
         Some(r) => r.get::<String, _>("password_hash"),
-        None => hash_password(state, "dummy-login-password".into()).await?,
+        None => DUMMY_PASSWORD_HASH.to_owned(),
     };
     let slot = state
         .password_slots
@@ -180,4 +185,17 @@ pub async fn refresh(state: &AppState, raw: &str, csrf: &str) -> ApiResult<Sessi
         refresh,
         user: public_user(state, user_id).await?,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dummy_login_hash_is_valid_argon2id() {
+        let hash = PasswordHash::new(DUMMY_PASSWORD_HASH).expect("valid dummy PHC string");
+        Argon2::default()
+            .verify_password(b"devstore-invalid-login-dummy", &hash)
+            .expect("dummy password verifies against the precomputed hash");
+    }
 }
