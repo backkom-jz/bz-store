@@ -2,21 +2,29 @@ pub mod common;
 pub mod config;
 pub mod infrastructure;
 pub mod middleware;
+pub mod modules;
 pub mod state;
 pub fn base_router() -> axum::Router {
+    foundation_routes().layer(axum::middleware::from_fn(middleware::request_id::wrap))
+}
+fn foundation_routes() -> axum::Router {
     axum::Router::new()
         .route(
             "/api/v1/health/live",
             axum::routing::get(async || common::ok(serde_json::json!({"status":"alive"}))),
         )
         .fallback(async || common::AppError::missing())
-        .layer(axum::middleware::from_fn(middleware::request_id::wrap))
 }
 pub fn build_router(state: state::AppState) -> axum::Router {
-    base_router()
+    foundation_routes()
         .merge(
             axum::Router::new()
                 .route("/api/v1/health/ready", axum::routing::get(ready))
+                .merge(modules::auth::handler::router())
+                .layer(axum::middleware::from_fn_with_state(
+                    state.clone(),
+                    middleware::security::origin,
+                ))
                 .with_state(state),
         )
         .layer(axum::middleware::from_fn(middleware::request_id::wrap))

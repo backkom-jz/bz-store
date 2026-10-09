@@ -68,7 +68,13 @@ impl TestApp {
         )
         .await
     }
-    pub async fn raw(&self, request: Request<Body>) -> TestResponse {
+    pub async fn raw(&self, mut request: Request<Body>) -> TestResponse {
+        request
+            .extensions_mut()
+            .insert(axum::extract::ConnectInfo(std::net::SocketAddr::from((
+                [127, 0, 0, 1],
+                40000,
+            ))));
         let r = self.router.clone().oneshot(request).await.unwrap();
         let status = r.status().as_u16();
         let headers = r.headers().clone();

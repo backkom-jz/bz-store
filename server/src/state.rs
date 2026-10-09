@@ -7,6 +7,7 @@ use sqlx::{PgPool, postgres::PgPoolOptions};
 use std::sync::Arc;
 #[derive(Clone)]
 pub struct AppState {
+    pub namespace: String,
     pub pool: PgPool,
     pub config: Arc<Config>,
     pub redis: redis::aio::ConnectionManager,
@@ -31,7 +32,11 @@ impl AppState {
         let scanner = Scanner {
             addr: config.clamav_addr.clone(),
         };
+        let namespace: String = sqlx::query_scalar("SELECT current_schema()")
+            .fetch_one(&pool)
+            .await?;
         Ok(Self {
+            namespace,
             pool,
             config: Arc::new(config),
             redis,

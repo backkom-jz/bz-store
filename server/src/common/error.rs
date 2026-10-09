@@ -55,7 +55,8 @@ impl AppError {
 }
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
-        (
+        let status = self.status;
+        let mut response = (
             self.status,
             Json(Envelope {
                 code: self.code,
@@ -64,7 +65,13 @@ impl IntoResponse for AppError {
                 request_id: request_id(),
             }),
         )
-            .into_response()
+            .into_response();
+        if status == StatusCode::TOO_MANY_REQUESTS {
+            response
+                .headers_mut()
+                .insert("retry-after", axum::http::HeaderValue::from_static("60"));
+        }
+        response
     }
 }
 impl From<sqlx::Error> for AppError {
