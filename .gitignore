@@ -1,0 +1,16 @@
+/target/
+node_modules/
+.nuxt/
+.output/
+dist/
+.env
+.env.*
+!.env.example
+!.env.test.example
+.DS_Store
+.superpowers/
+.worktrees/
+test-results/
+playwright-report/
+*.log
+/.runtime/
