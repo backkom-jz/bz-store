@@ -688,7 +688,7 @@ tail -n 100 /var/log/nginx/error.log
 
 | 现象 | 先看 |
 | --- | --- |
-| API 反复重启 | `journalctl` 里的配置或迁移错误。不要放宽库名校验 |
+| API 反复重启，日志是 `database migration failed` | 先 `systemctl stop devstore-api`。MySQL 的建表语句不能回滚；`_sqlx_migrations.success=0` 表示这次迁移只执行了一部分，继续重启不会重跑。空的 `bz_ztore_test` 可以删掉已建的表后，用 `mysql` 客户端重放 `server/migrations/0001_core.sql` 看真正的 SQL 错误 |
 | `ready` 为 503 | MySQL、Redis，或测试桶尚未 `init-storage` |
 | Nginx 502 | `devstore-web` 或 `devstore-api` 没在 3000 / 18080 监听；SELinux 是否拦截反代 |
 | `/admin/products/new` 为 404 | `current/admin-dist/index.html` 是否存在，`nginx` 用户能否读取，命名 location 是否仍在配置里 |

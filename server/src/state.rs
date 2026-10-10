@@ -70,7 +70,10 @@ impl AppState {
         sqlx::migrate!("./migrations")
             .run(&self.pool)
             .await
-            .map_err(|_| crate::common::AppError::internal())?;
+            .map_err(|error| {
+                tracing::error!(error = %error, "database migration failed");
+                crate::common::AppError::internal()
+            })?;
         Ok(())
     }
 }
