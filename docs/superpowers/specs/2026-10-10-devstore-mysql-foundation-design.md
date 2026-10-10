@@ -1,79 +1,79 @@
-# DevStore MySQL Foundation and Public-Launch Readiness Design
+# DevStore MySQL 基础设施与公网发布准备设计
 
-Date: 2026-10-10
+日期：2026-10-10
 
-Status: Draft for user review; supersedes the PostgreSQL choice in the initial tutorial-checkout design for future implementation.
+状态：待用户审阅；后续实施时，本设计将覆盖首个教程交易闭环设计中关于 PostgreSQL 的选择。
 
-## Goal
+## 目标
 
-Move DevStore's Rust persistence layer from PostgreSQL to MySQL and prepare safe local and public deployment configurations for `bz-store.local` and `store.bengzi.cn`.
+将 DevStore Rust 数据层从 PostgreSQL 迁移到 MySQL，并为 `bz-store.local` 本地站点和 `store.bengzi.cn` 公网站点准备安全的开发与部署配置。
 
-## User decisions and constraints
+## 用户已确认的决定与约束
 
-- Use MySQL for DevStore, with a dedicated database named `bz_ztore` on the supplied RDS instance.
-- Do not use the existing ERP database or its credentials in DevStore.
-- Local development connects to the RDS instance; do not add a localhost MySQL service to the normal development stack.
-- Keep database and service credentials outside Git in local environment files or a production secret manager. The previously pasted database password is exposed and must be rotated; it must not be reused or copied into project files.
-- Use `http://bz-store.local` as the local site origin (with a local hosts-file entry) and `https://store.bengzi.cn` as the public origin.
-- Email-provider credentials are not available yet. The application must support a generic SMTP configuration and a local-only mail sink for development and tests.
+- DevStore 使用 MySQL，并在用户提供的 RDS 实例上使用专用数据库 `bz_ztore`。
+- 不使用现有 ERP 数据库，也不使用其凭据连接或迁移 DevStore。
+- 本地开发时应用连接 RDS；日常开发环境不新增本机 MySQL 服务。
+- 数据库和服务凭据保存在 Git 之外的本地环境文件或生产密钥管理服务中。此前贴出的数据库密码已暴露，必须轮换，项目文件不得复制或复用该密码。
+- 本地站点来源为 `http://bz-store.local`；公网来源为 `https://store.bengzi.cn`。
+- 暂无邮件服务商账号。应用需支持通用 SMTP 配置，并为开发和测试提供仅本地可访问的邮件接收器。
 
-## Scope
+## 范围
 
-### MySQL conversion
+### MySQL 迁移
 
-- Replace SQLx PostgreSQL features, `PgPool`, PostgreSQL migrations, and PostgreSQL-specific queries with SQLx MySQL equivalents.
-- Convert the entire existing schema and every runtime query, fixture, integration test, test helper, seed path, and CLI operation. The migration is complete only when all existing transaction, ownership, idempotency, entitlement, upload, and audit behavior passes against MySQL.
-- Store Rust UUID identifiers in `BINARY(16)` using SQLx's MySQL UUID encoding. Use MySQL `JSON`, `DATETIME(6)` in UTC, and integer cents for money.
-- Replace PostgreSQL-only constructs explicitly: positional `$n` parameters, `RETURNING`, `ON CONFLICT`, partial unique indexes, aggregate `FILTER`, `pgcrypto`, `search_path`, `to_jsonb`/`jsonb_build_object`, PL/pgSQL update triggers, regular-expression operators, and advisory transaction locks. Use SQLx `?` parameters, application-generated UUIDs and explicit IDs, `ON DUPLICATE KEY UPDATE`, generated nullable keys for conditional uniqueness, conditional aggregates, explicit JSON projection, application-managed `updated_at`, MySQL `REGEXP`, and row/unique-key locking or naturally idempotent seed operations.
-- Avoid relying on server-generated UUIDs or dynamic timestamp defaults. Generate UUIDs in Rust and bind them as SQLx MySQL `BINARY(16)` values; calculate order and token expirations in the application and bind UTC timestamps.
-- Preserve `SELECT ... FOR UPDATE` transaction boundaries for payment review, order cancellation/expiry, refresh-token rotation, and other concurrency-sensitive flows. Verify engine and table configuration use InnoDB.
-- Treat existing application data as disposable local/test data unless a separate migration is explicitly designed. Never import, alter, or migrate ERP data.
+- 将 SQLx PostgreSQL 功能、`PgPool`、PostgreSQL 迁移文件和专属 SQL 替换为 SQLx MySQL 实现。
+- 转换现有数据库结构、所有运行时查询、测试数据、集成测试、测试辅助代码、示例数据和 CLI 操作。只有全部交易、所有权、幂等、权益、上传和审计行为都通过 MySQL 验证，才算完成迁移。
+- Rust UUID 标识以 `BINARY(16)` 存储，使用 SQLx 对 MySQL 的 UUID 编码。使用 MySQL `JSON`、统一按 UTC 处理的 `DATETIME(6)`，金额继续使用整数分。
+- 明确替换 PostgreSQL 专属用法：`$n` 参数、`RETURNING`、`ON CONFLICT`、部分唯一索引、聚合 `FILTER`、`pgcrypto`、`search_path`、`to_jsonb`/`jsonb_build_object`、PL/pgSQL 更新时间触发器、正则表达式运算符和事务级 advisory lock。分别使用 SQLx `?` 参数、应用生成 UUID 和显式 ID、`ON DUPLICATE KEY UPDATE`、可空生成列实现条件唯一、条件聚合、应用生成 UUID、显式 JSON 字段投影、应用更新 `updated_at`、MySQL `REGEXP`，以及行锁/唯一键锁或天然幂等的种子数据操作。
+- 不依赖数据库生成 UUID 或动态时间默认值。UUID 由 Rust 生成并绑定为 SQLx MySQL `BINARY(16)`；订单和令牌过期时间由应用计算并以 UTC 写入。
+- 保留付款审核、订单取消/超时、刷新令牌轮换等并发敏感流程中的 `SELECT ... FOR UPDATE` 事务边界，并确认相关表使用 InnoDB。
+- 现有应用数据按本地/测试数据处理。除非另行设计数据迁移，否则不导入、不修改、不迁移 ERP 数据。
 
-### Development and test database isolation
+### 开发与测试数据库隔离
 
-- Normal local runtime uses a `DATABASE_URL` for the dedicated RDS database `bz_ztore`; no credential appears in committed files or command-line examples.
-- Destructive integration tests require a separately provisioned database, expected to be named `bz_ztore_test`, and fail closed unless the configured database name is explicitly test-only. The test harness must not drop, truncate, or migrate the runtime database. Local integration tests may target this dedicated RDS test database; they must not depend on a localhost MySQL instance.
-- CI uses an ephemeral MySQL service and a dedicated test database. Tests run serially and clear only data inside that disposable database where MySQL cannot provide PostgreSQL-style per-test schemas.
-- Document the exact privileges needed for application migrations versus test database creation/cleanup. Runtime credentials should not have privileges to create or drop databases.
+- 普通本地运行通过 `DATABASE_URL` 连接 RDS 上的专用数据库 `bz_ztore`；凭据不得写入提交文件、命令示例或日志。
+- 有破坏性的集成测试必须使用单独创建的数据库，预期名称为 `bz_ztore_test`。只有确认连接目标是测试库时才允许清理或迁移；测试框架不得删除、清空或迁移运行时数据库。
+- 本地集成测试可连接该专用 RDS 测试库，不得依赖本机 MySQL。CI 使用临时 MySQL 服务和专用测试数据库；由于 MySQL 不支持 PostgreSQL 风格的逐测试 schema 隔离，必要时串行运行测试，并且只清理临时测试库中的数据。
+- 文档说明应用迁移与测试库创建/清理所需的精确权限。运行时账号不应拥有创建或删除数据库的权限。
 
-### Launch readiness
+### 公网发布准备
 
-- Add dependency vulnerability checks to CI for the locked Rust and npm dependency graphs. High-severity findings block release unless an exact package, reachability, mitigation, and expiry are documented and reviewed. Do not conceal advisories with broad audit suppression.
-- Add operator procedures for encrypted database backups, retention, off-host storage, and restore drills. Document object-storage backup separately because a database dump does not include uploaded objects.
-- Configure the gateway for local `bz-store.local` and public `store.bengzi.cn`, including HTTPS redirect and trusted proxy behavior. Certificates and private keys are mounted/provisioned outside the repository. Public certificate issuance and DNS validation require the operator's DNS and server access.
-- Add production environment validation so the public site origin is `https://store.bengzi.cn`, secure cookies are enabled, and database/storage endpoints are private and TLS-protected where supported.
-- Verify CI workflows on the branch and document any checks that still require the GitHub-hosted environment.
+- 网关支持本地 `bz-store.local` 与公网 `store.bengzi.cn`，配置 HTTPS 跳转和可信代理。证书与私钥通过仓库外的挂载或密钥管理方式提供。签发公网证书和验证 DNS 需要用户提供的 DNS 与服务器访问权限。
+- 增加生产环境配置校验：公网 `SITE_URL` 必须是 `https://store.bengzi.cn`，启用 Secure Cookie；数据库和对象存储使用私有网络，并在服务支持时启用 TLS。
+- 在 CI 中增加锁定版 Rust/npm 依赖漏洞检查。高危发现应阻止发布；如需例外，必须记录具体依赖、可达性、缓解措施和到期时间并经过审查，不得通过大范围忽略来隐藏告警。
+- 提供操作手册，说明加密数据库备份、保留策略、异地存储和恢复演练。对象存储需要单独备份，因为数据库转储不包含用户上传文件。
+- 验证当前分支上的 CI 工作流，并记录仍需 GitHub 托管环境才能完成的检查。
 
-## Database and deployment invariants
+## 数据库与部署约束
 
-- The DevStore database is isolated from ERP and other applications.
-- No real DSN, password, SMTP secret, TLS key, database dump, or uploaded customer data is committed or printed in logs.
-- Migrations are forward-only and tested against a clean MySQL database. Runtime startup does not reset data and does not run destructive test setup.
-- Money remains integer cents; audit records and unique payment references remain transactionally consistent.
-- Production is not declared ready until DNS, HTTPS, backups, and a successful restore drill have been verified on the real deployment environment.
+- DevStore 数据库与 ERP 及其他应用隔离。
+- 不得将真实 DSN、密码、SMTP 密钥、TLS 私钥、数据库转储或用户上传数据提交到 Git 或输出到日志。
+- 数据库迁移采用前向迁移，并在全新 MySQL 数据库上验证。运行时启动不得重置数据或执行破坏性测试准备。
+- 金额继续以整数分保存；审计记录、支付流水唯一性和业务状态在事务中保持一致。
+- 只有在真实部署环境完成 DNS、HTTPS、备份及恢复演练后，才能宣布公网发布准备完成。
 
-## Acceptance criteria
+## 验收标准
 
-1. SQLx builds with the MySQL driver only for runtime persistence; no PostgreSQL-only query or migration remains in active code.
-2. A clean MySQL database migrates successfully and the full Rust integration suite passes against MySQL.
-3. Concurrency tests still prove idempotent order creation, mutually exclusive payment review/expiry, and exactly-once entitlement grants.
-4. The local runtime config targets the dedicated RDS database without embedding credentials; a destructive test configuration pointing at `bz_ztore` is rejected before connecting or changing data.
-5. CI starts its own MySQL service, runs migration and integration tests, dependency checks, web/admin builds, and desktop/mobile browser tests.
-6. Gateway host routing and HTTPS configuration supports the local and public hostnames without committing certificates.
-7. Backup documentation includes a tested restore procedure and separately identifies object storage recovery.
-8. Release notes distinguish locally validated behavior from DNS, certificate, RDS, and backup checks that require the user's infrastructure.
+1. 运行时 SQLx 仅使用 MySQL 驱动；活动代码和迁移中不再残留 PostgreSQL 专属查询或语法。
+2. 空 MySQL 数据库可成功迁移，完整 Rust 集成测试可在 MySQL 上通过。
+3. 并发测试仍能证明订单创建幂等、付款审核与取消/超时互斥，以及权益只授予一次。
+4. 本地运行配置连接专用 RDS 数据库且不包含凭据；若破坏性测试错误指向 `bz_ztore`，必须在建立连接或修改数据前失败。
+5. CI 启动独立 MySQL 服务，运行迁移、集成测试、依赖检查、前后台构建和桌面/移动端浏览器测试。
+6. 网关支持本地与公网域名路由和 HTTPS 配置，且不在仓库中保存证书。
+7. 备份文档包含经过验证的恢复步骤，并单独说明对象存储恢复。
+8. 发布说明区分本地验证结果与必须通过用户 DNS、证书、RDS 和备份环境验证的事项。
 
-## Out of scope
+## 不在本次范围内
 
-- Connecting to or changing the supplied RDS instance during implementation without an explicit safe test target and rotated credentials.
-- Reusing or migrating the ERP database.
-- Provisioning DNS records, cloud infrastructure, TLS certificates, or secret-manager entries without the corresponding account access.
-- Email verification, password reset, and administrator MFA; these are specified separately.
-- Digital downloads, service tickets, refunds, and automated payment gateways.
+- 在没有安全测试目标和已轮换凭据的情况下连接或修改用户提供的 RDS。
+- 复用或迁移 ERP 数据库。
+- 在没有相应账号访问权时配置 DNS 记录、云基础设施、TLS 证书或密钥管理服务。
+- 邮箱验证、密码重置和管理员 MFA；这些功能由独立设计文档说明。
+- 数字资源下载、服务工单、退款和自动支付。
 
-## Risks and decisions to verify during implementation planning
+## 风险与计划阶段需确认的信息
 
-- RDS engine version, SQL mode, TLS settings, and database privileges must be confirmed before selecting exact migration syntax.
-- MySQL has different locking, index, JSON, and uniqueness semantics from PostgreSQL; passing compilation alone is insufficient.
-- A dedicated test database and restricted test credentials must exist before any test can create or clean schema objects.
-- Local host resolution and trusted certificates require developer-machine setup; public DNS and certificates require operator access.
+- 实际 RDS 引擎版本、SQL mode、TLS 设置和数据库权限会影响迁移语法，需在实施计划中确定。
+- MySQL 与 PostgreSQL 的锁、索引、JSON 和唯一性语义不同，只有编译成功不足以证明迁移正确。
+- 在任何测试创建或清理数据库对象前，必须准备独立测试库和权限受限的测试凭据。
+- 本地域名解析和受信任证书需要开发机配置；公网 DNS 与证书需要用户提供运维权限。

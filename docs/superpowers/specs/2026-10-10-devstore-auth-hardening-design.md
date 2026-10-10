@@ -1,75 +1,75 @@
-# DevStore Email Authentication and Administrator MFA Design
+# DevStore 邮箱认证与管理员 MFA 加固设计
 
-Date: 2026-10-10
+日期：2026-10-10
 
-Status: Draft for user review; depends on the MySQL foundation design.
+状态：待用户审阅；依赖 MySQL 基础设施设计先行实施。
 
-## Goal
+## 目标
 
-Add verifiable email ownership, secure password recovery, and enforced second-factor authentication for administrator access without requiring a mail-provider account during implementation.
+增加邮箱所有权验证、安全的密码找回，以及管理员访问所需的强制二次验证；实施时不要求已拥有邮件服务商账号。
 
-## User decisions and constraints
+## 用户已确认的决定与约束
 
-- SMTP credentials are not available yet; support a provider-neutral SMTP configuration and leave credentials as deployment-time secrets.
-- Local site origin is `bz-store.local`; public site origin is `store.bengzi.cn`.
-- The persistence layer will use the dedicated MySQL database `bz_ztore` described in the foundation design.
-- Existing cookie sessions, CSRF checks, Argon2id password hashes, rate limits, and server-side role enforcement remain the foundation.
+- 暂无 SMTP 凭据；支持与服务商无关的 SMTP 配置，凭据在部署时通过密钥配置。
+- 本地站点来源为 `bz-store.local`，公网站点来源为 `store.bengzi.cn`。
+- 数据层使用 MySQL 基础设计中的专用数据库 `bz_ztore`。
+- 保留现有 HttpOnly Cookie 会话、CSRF 校验、Argon2id 密码哈希、限流和服务端角色权限校验。
 
-## Email delivery
+## 邮件投递
 
-- Define a small email-delivery boundary with SMTP as the production adapter and a local mail sink for development/test environments.
-- Add an outbox so account creation and token state commit atomically before mail delivery. Delivery failures remain retryable and are observable without logging message secrets or full token URLs.
-- Production startup validates SMTP configuration before enabling registration and password-reset email flows. It must fail clearly or keep those flows unavailable; it must never silently report an email as sent.
-- Never include SMTP credentials or real reset/verification tokens in logs. Local test messages are available only through the local mail sink and never exposed in production responses.
+- 定义精简的邮件投递接口：生产环境使用 SMTP 适配器，开发和测试环境使用本地邮件接收器。
+- 加入邮件发件箱（outbox），使账号/令牌状态和待发送邮件在同一事务中提交。投递失败后可重试并能被运维发现；日志不得记录邮件秘密或完整令牌链接。
+- 生产环境在启用注册验证和密码重置邮件前校验 SMTP 配置。配置缺失时明确失败或关闭相关流程，不能假装邮件已经发送。
+- 真实 SMTP 凭据和令牌不得写入日志。仅本地邮件接收器可以查看开发测试邮件，生产响应不得返回令牌。
 
-## Email verification and account registration
+## 邮箱验证与账号注册
 
-- Registration normalizes the email, hashes the password, creates an unverified account, and creates a high-entropy one-time verification token. Store only a cryptographic digest of the token and its purpose/expiry/consumption metadata.
-- The registration response does not disclose whether an address already has an account and does not create an authenticated session until verification succeeds.
-- Verification is one-time, expiry-checked, rate-limited, and atomically marks the account verified while consuming the token.
-- Login for an unverified account returns the same public authentication error shape used for invalid credentials.
-- Existing accounts created before this migration need an explicit compatibility decision in the implementation plan; no account should accidentally become inaccessible without a documented backfill or verification policy.
+- 注册时规范化邮箱、哈希密码、创建未验证账号，并生成高熵、一次性验证令牌。数据库只保存令牌的密码学摘要，以及用途、过期时间和消费状态。
+- 注册响应不泄露该邮箱是否已有账号；邮箱验证成功前不创建已认证会话。
+- 验证操作必须一次性、检查有效期、限流，并在同一事务中将账号标记为已验证并消费令牌。
+- 未验证账号登录时，返回与无效凭据相同的公开错误格式。
+- 对迁移前创建的现有账号，实施计划必须明确兼容与回填策略，不能无说明地让现有账号无法登录。
 
-## Password recovery
+## 密码找回
 
-- `POST /api/v1/auth/password/forgot` always returns the same status and response body for known and unknown email addresses.
-- For known verified accounts, generate a high-entropy one-time reset token, store only its digest and a short expiry, and enqueue an email.
-- `POST /api/v1/auth/password/reset` atomically validates and consumes the token, updates the Argon2id password hash, and revokes every active session for that user.
-- Expired, consumed, malformed, or unknown tokens produce the same public failure response. Rate limits apply by client IP and normalized email digest.
-- Reset links use the configured canonical site origin, never an untrusted Host or return URL.
+- `POST /api/v1/auth/password/forgot` 对已注册和未注册邮箱返回相同 HTTP 状态与响应体。
+- 对已验证账号生成高熵一次性重置令牌，仅保存其摘要和较短过期时间，并将邮件加入发件箱。
+- `POST /api/v1/auth/password/reset` 在事务中验证并消费令牌、更新 Argon2id 密码哈希，同时撤销该用户所有有效会话。
+- 过期、已消费、格式无效或未知的令牌返回相同公开错误。按客户端 IP 和规范化邮箱摘要限流。
+- 重置链接只使用配置的规范站点来源，不得采用不可信 Host 或未经验证的跳转地址。
 
-## Administrator TOTP MFA
+## 管理员 TOTP MFA
 
-- TOTP is mandatory for every administrator API request. Frontend route guards are usability only; the Rust API enforces MFA verification.
-- Administrator login requires password and a current TOTP code. An administrator without enrolled MFA cannot obtain a normal administrator session.
-- Enrollment is performed through a controlled bootstrap/CLI process for an initial admin and a verified re-enrollment process for an existing admin. The process displays the seed/recovery codes once and requires a valid TOTP confirmation before activation.
-- Store the TOTP seed encrypted with a dedicated `MFA_ENCRYPTION_KEY`; keep that key outside the database and repository. Store recovery-code digests, never plaintext codes.
-- A session records the time and method of successful MFA verification. Admin middleware requires a valid, unexpired MFA marker; ordinary user sessions remain unchanged.
-- Recovery codes are single-use and atomically consumed. Re-enrollment invalidates old recovery codes and prior admin sessions and is written to the admin audit log.
-- If the encryption key is missing or invalid in production, administrator login and MFA management fail closed.
+- 所有管理员 API 请求都必须通过 TOTP MFA 校验。前端路由守卫只用于改善体验；Rust API 必须强制执行权限校验。
+- 管理员登录需要密码和当前有效 TOTP 验证码。未完成 MFA 注册的管理员不能取得普通管理员会话。
+- 初始管理员通过受控的 CLI/引导流程注册 MFA；现有管理员重新注册也必须经过验证流程。密钥和恢复码只展示一次，并要求先提交有效 TOTP 验证码再启用。
+- TOTP 密钥使用独立的 `MFA_ENCRYPTION_KEY` 加密后存入 MySQL；该密钥不得进入数据库或仓库。恢复码只存摘要，不能保存明文。
+- 会话记录 MFA 验证的时间和方式。管理员中间件只接受带有未过期 MFA 标记的会话；普通用户会话不受影响。
+- 恢复码只能消费一次，并通过事务保证并发使用最多成功一次。重新注册 MFA 时作废旧恢复码和管理员旧会话，并写入管理员审计日志。
+- 生产环境缺少或无法使用加密密钥时，管理员登录和 MFA 管理必须失败关闭。
 
-## API and frontend behavior
+## API 与前端行为
 
-- Add email verification resend and password forgot/reset pages with generic success messaging and no account-existence oracle.
-- Add TOTP enrollment, confirmation, challenge, and recovery-code endpoints with CSRF protection and explicit rate limits.
-- Admin UI displays setup/challenge state and does not treat a hidden route as an authorization boundary.
-- Document account recovery and MFA recovery operational procedures, including what support can and cannot do.
+- 增加邮箱验证、重发验证邮件、密码找回和密码重置页面；操作成功提示不得泄露账号是否存在。
+- 增加 TOTP 注册、确认、登录挑战和恢复码 API；所有写操作均启用 CSRF 校验和明确的限流策略。
+- 管理后台展示 MFA 注册/挑战状态，但隐藏前端路由不能被视为权限边界。
+- 编写账号找回和 MFA 恢复操作手册，说明支持人员可以做什么、不能做什么。
 
-## Acceptance criteria
+## 验收标准
 
-1. Unverified users cannot log in or create orders; valid one-time email verification activates the account.
-2. Duplicate/unknown registration and password-forgot requests do not expose account existence in public response bodies/statuses.
-3. Verification/reset tokens are stored only as digests, expire, cannot be replayed, and are consumed atomically under concurrent requests.
-4. Password reset changes the Argon2id hash and revokes all sessions; old access and refresh cookies stop working.
-5. Admin credentials without TOTP cannot access any admin endpoint, including direct API requests; valid TOTP can establish an MFA-marked session.
-6. Expired/replayed TOTP windows and consumed recovery codes are rejected; concurrent recovery-code use succeeds at most once.
-7. TOTP seed is encrypted in MySQL, recovery-code plaintext is never persisted, and neither secrets nor tokens appear in logs or production responses.
-8. SMTP outage leaves a retryable outbox record and does not falsely report delivery; local mail-sink tests can complete verification and recovery without public credentials.
-9. Existing cookie, CSRF, ownership, payment-review, and purchase E2E tests continue to pass after the authentication changes.
+1. 未验证用户不能登录或下单；有效的一次性验证邮件可激活账号。
+2. 重复/未知邮箱注册和找回密码请求不会通过响应状态或响应体泄露账号是否存在。
+3. 验证/重置令牌只存摘要、有过期时间、不可重放；并发消费通过事务正确处理。
+4. 密码重置后 Argon2id 哈希更新，所有旧会话失效，旧 Access/Refresh Cookie 均不能继续使用。
+5. 管理员没有 TOTP 时无法访问任何管理 API，包括直接请求 API；有效 TOTP 可建立带 MFA 标记的会话。
+6. 过期/重放 TOTP 和已消费恢复码会被拒绝；并发消费同一恢复码最多成功一次。
+7. MySQL 中的 TOTP 密钥为加密值，恢复码明文不落库，日志和生产响应不包含令牌或秘密。
+8. SMTP 故障会保留可重试的 outbox 记录，不会错误报告投递成功；本地测试邮件接收器可在无公网邮件账号时完成验证和密码找回测试。
+9. 认证改动后，现有 Cookie、CSRF、资源所有权、付款审核和购买端到端测试仍然通过。
 
-## Out of scope
+## 不在本次范围内
 
-- Selecting or provisioning a specific email vendor account.
-- SMS authentication, passkeys/WebAuthn, social login, or consumer MFA.
-- Support agents bypassing MFA or manually marking arbitrary addresses verified.
-- Changing order/payment behavior except that unverified accounts cannot initiate new authenticated purchases.
+- 选择或注册具体邮件供应商账号。
+- 短信认证、Passkey/WebAuthn、社交登录或普通用户 MFA。
+- 支持人员绕过 MFA 或手动验证任意邮箱。
+- 除未验证账号不能开始新的登录购买流程外，不调整订单和付款逻辑。
