@@ -76,12 +76,16 @@ impl IntoResponse for AppError {
 }
 impl From<sqlx::Error> for AppError {
     fn from(error: sqlx::Error) -> Self {
-        let code = error.as_database_error().and_then(|e| e.code());
-        match code.as_deref() {
-            Some("23505") => Self::conflict("记录已存在或已被处理"),
-            Some("23514") | Some("23503") => Self::invalid("数据不符合业务约束"),
+        let database_error = error.as_database_error();
+        let code = database_error.and_then(|e| e.code());
+        let mysql_number = database_error
+            .and_then(|e| e.try_downcast_ref::<sqlx::mysql::MySqlDatabaseError>())
+            .map(sqlx::mysql::MySqlDatabaseError::number);
+        match mysql_number {
+            Some(1062) => Self::conflict("记录已存在或已被处理"),
+            Some(3819 | 1451 | 1452) => Self::invalid("数据不符合业务约束"),
             _ => {
-                tracing::error!(kind="database",sqlstate=?code,"database operation failed");
+                tracing::error!(kind="database",sqlstate=?code,mysql_error_number=?mysql_number,"database operation failed");
                 Self::internal()
             }
         }

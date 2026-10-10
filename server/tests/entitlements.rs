@@ -137,7 +137,7 @@ async fn it_paid_content_access_and_archived_entitlements() {
         .status,
         200
     );
-    sqlx::query("UPDATE user_entitlements SET status='revoked',revoked_at=NOW() WHERE user_id=$1")
+    sqlx::query("UPDATE user_entitlements SET status='revoked',revoked_at=NOW() WHERE user_id=?")
         .bind(buyer.id)
         .execute(&app.state.pool)
         .await

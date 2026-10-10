@@ -37,7 +37,35 @@ pub async fn document() -> axum::Json<Value> {
         ("get", "/health/live", "Liveness", "", false),
         ("get", "/health/ready", "Dependency readiness", "", false),
         ("post", "/auth/register", "Register", "Credentials", false),
-        ("post", "/auth/login", "Login", "Credentials", false),
+        (
+            "post",
+            "/auth/verify-email",
+            "Verify email",
+            "TokenInput",
+            false,
+        ),
+        (
+            "post",
+            "/auth/verify-email/resend",
+            "Resend verification",
+            "EmailInput",
+            false,
+        ),
+        (
+            "post",
+            "/auth/password/forgot",
+            "Request password reset",
+            "EmailInput",
+            false,
+        ),
+        (
+            "post",
+            "/auth/password/reset",
+            "Reset password",
+            "ResetInput",
+            false,
+        ),
+        ("post", "/auth/login", "Login", "LoginCredentials", false),
         ("post", "/auth/refresh", "Rotate session", "", true),
         ("post", "/auth/logout", "Revoke session", "", true),
         ("get", "/auth/csrf", "Get CSRF token", "", true),
@@ -183,13 +211,25 @@ pub async fn document() -> axum::Json<Value> {
         ),
         ("get", "/admin/audit-logs", "Admin audit", "", true),
     ];
+    doc["components"]["schemas"]["TokenInput"] =
+        json!({"type":"object","required":["token"],"properties":{"token":{"type":"string"}}});
+    doc["components"]["schemas"]["EmailInput"] = json!({"type":"object","required":["email"],"properties":{"email":{"type":"string","format":"email"}}});
+    doc["components"]["schemas"]["ResetInput"] = json!({"type":"object","required":["token","password"],"properties":{"token":{"type":"string"},"password":{"type":"string","minLength":12,"maxLength":128}}});
+    doc["components"]["schemas"]["LoginCredentials"] = json!({"type":"object","required":["email","password"],"properties":{"email":{"type":"string","format":"email"},"password":{"type":"string"},"totp_code":{"type":"string","description":"管理员 6 位 TOTP 动态码或单次恢复码"}}});
     for (method, path, title, schema, auth) in routes {
         let mut op = json!({"summary":title,"responses":{"200":{"description":"Success","content":{"application/json":{"schema":{"$ref":"#/components/schemas/Envelope"}}}},"400":{"description":"Malformed request"},"401":{"description":"Unauthenticated or expired session"},"403":{"description":"CSRF, role, or entitlement denied"},"404":{"description":"Missing or owned by another user"},"409":{"description":"State/idempotency/reference conflict"},"413":{"description":"Upload too large"},"422":{"description":"Validation failed"},"429":{"description":"Rate limited"},"500":{"description":"Transaction failed"},"503":{"description":"Dependency/payment configuration unavailable"}},"parameters":[]});
+        if path == "/auth/register" {
+            op["responses"]["202"] =
+                json!({"description":"Registration accepted; verification email may follow"});
+        }
         if method == "post"
             && !path.ends_with("/approve")
             && !path.ends_with("/reject")
             && !path.ends_with("/cancel")
             && !path.starts_with("/auth/login")
+            && !path.starts_with("/auth/register")
+            && !path.starts_with("/auth/verify-email")
+            && !path.starts_with("/auth/password/")
             && !path.starts_with("/auth/logout")
             && !path.starts_with("/auth/refresh")
         {

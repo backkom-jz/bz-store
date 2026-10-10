@@ -1,4 +1,4 @@
-import {test,expect,adminApi,makeCourse} from './support';
+import {test,expect,adminApi,makeCourse,origin,verifyMailbox} from './support';
 test('public catalog, preview and protected chapter',async({page})=>{
  const admin=await adminApi();const course=await makeCourse(admin);
  await page.goto('/');
@@ -12,12 +12,19 @@ test('public catalog, preview and protected chapter',async({page})=>{
  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
  await admin.api.dispose();
 });
-test('registration return path is local and empty library is usable',async({page})=>{
+test('registration requires email verification and an empty library is usable',async({page})=>{
  await page.goto('/register?returnTo='+encodeURIComponent('//evil.example'));
- await page.getByLabel('邮箱').fill('browser-'+crypto.randomUUID()+'@example.test');
+ const email='browser-'+crypto.randomUUID()+'@example.test';
+ await page.getByLabel('邮箱').fill(email);
  await page.getByLabel('密码',{exact:true}).fill('Browser-test-password-42');
  await page.getByRole('button',{name:'创建账号'}).click();
- await expect(page).toHaveURL('http://127.0.0.1:18088/');
+ await expect(page.getByRole('status')).toContainText('请检查你的邮箱');
+ await verifyMailbox(email,(path,data)=>page.request.post(origin+path,{data,headers:{Origin:origin}}));
+ await page.goto('/login');
+ await page.getByLabel('邮箱').fill(email);
+ await page.getByLabel('密码',{exact:true}).fill('Browser-test-password-42');
+ await page.getByRole('button',{name:'登录'}).click();
+ await expect(page).toHaveURL(origin+'/');
  await page.goto('/user/library');await expect(page.getByText('还没有已购教程')).toBeVisible();
  await page.getByRole('link',{name:'去探索教程'}).click();await expect(page).toHaveURL(/\/tutorials$/);
 });

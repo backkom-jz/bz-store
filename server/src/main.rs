@@ -14,6 +14,27 @@ async fn main() {
         .await
         .expect("dependencies unavailable");
     state.migrate().await.expect("database migration failed");
+    if let (Some(sender), Some(email)) = (state.email_sender.clone(), state.config.email.clone()) {
+        let pool = state.pool.clone();
+        tokio::spawn(async move {
+            let mut timer = tokio::time::interval(std::time::Duration::from_secs(2));
+            loop {
+                timer.tick().await;
+                match devstore_server::infrastructure::email::send_one(
+                    &pool,
+                    &email.outbox_key,
+                    sender.as_ref(),
+                    time::OffsetDateTime::now_utc(),
+                )
+                .await
+                {
+                    Ok(true) => {}
+                    Ok(false) => tokio::time::sleep(std::time::Duration::from_secs(5)).await,
+                    Err(error) => tracing::error!(code = error.code, "email outbox worker failed"),
+                }
+            }
+        });
+    }
     let cleanup = state.clone();
     tokio::spawn(async move {
         let mut timer = tokio::time::interval(std::time::Duration::from_secs(3600));

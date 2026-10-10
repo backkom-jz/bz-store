@@ -51,7 +51,7 @@ async fn it_real_scanner_and_orphan_cleanup() {
             .status,
         503
     );
-    sqlx::query("UPDATE file_objects SET created_at=NOW()-INTERVAL '2 days'")
+    sqlx::query("UPDATE file_objects SET created_at=DATE_SUB(UTC_TIMESTAMP(6),INTERVAL 2 DAY)")
         .execute(&app.state.pool)
         .await
         .unwrap();
@@ -172,7 +172,7 @@ async fn it_private_uploads_and_concurrent_submission() {
         .status,
         200
     );
-    let key:String=sqlx::query_scalar("SELECT f.storage_key FROM file_objects f JOIN payment_submissions p ON p.file_id=f.id WHERE p.id=$1").bind(Uuid::parse_str(id).unwrap()).fetch_one(&app.state.pool).await.unwrap();
+    let key:String=sqlx::query_scalar("SELECT f.storage_key FROM file_objects f JOIN payment_submissions p ON p.file_id=f.id WHERE p.id=?").bind(Uuid::parse_str(id).unwrap()).fetch_one(&app.state.pool).await.unwrap();
     let anonymous = reqwest::Client::builder()
         .no_proxy()
         .build()

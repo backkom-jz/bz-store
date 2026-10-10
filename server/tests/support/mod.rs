@@ -1,13 +1,18 @@
 #![allow(dead_code)]
+#[path = "database.rs"]
+pub mod database;
 use axum::{
     Router,
     body::Body,
     http::{HeaderMap, Request},
 };
-use devstore_server::{config::Config, state::AppState};
+use devstore_server::{
+    config::{Config, EmailConfig},
+    state::AppState,
+};
 use http_body_util::BodyExt;
 use serde_json::{Value, json};
-use sqlx::{PgPool, postgres::PgPoolOptions};
+use sqlx::{MySqlPool, mysql::MySqlPoolOptions};
 use tower::ServiceExt;
 use uuid::Uuid;
 
@@ -23,6 +28,41 @@ pub struct Course {
     pub slug: String,
 }
 impl TestApp {
+    pub async fn admin_totp_secret(&self, user: Uuid) -> Vec<u8> {
+        use aes_gcm::{Aes256Gcm, KeyInit, Nonce, aead::Aead};
+        let encrypted: Vec<u8> =
+            sqlx::query_scalar("SELECT encrypted_secret FROM admin_mfa WHERE user_id=?")
+                .bind(user)
+                .fetch_one(&self.state.pool)
+                .await
+                .unwrap();
+        let (nonce, ciphertext) = encrypted.split_at(12);
+        Aes256Gcm::new_from_slice(&[23_u8; 32])
+            .unwrap()
+            .decrypt(Nonce::from_slice(nonce), ciphertext)
+            .unwrap()
+    }
+    pub async fn email_token(&self, email: &str, kind: &str) -> String {
+        use aes_gcm::{Aes256Gcm, KeyInit, Nonce, aead::Aead};
+        let encrypted: Vec<u8> = sqlx::query_scalar("SELECT encrypted_payload FROM email_outbox WHERE recipient=? AND kind=? AND status='pending' ORDER BY created_at DESC,id DESC LIMIT 1")
+            .bind(email.to_lowercase()).bind(kind).fetch_one(&self.state.pool).await.unwrap();
+        let (nonce, ciphertext) = encrypted.split_at(12);
+        let plaintext = Aes256Gcm::new_from_slice(&[17_u8; 32])
+            .unwrap()
+            .decrypt(Nonce::from_slice(nonce), ciphertext)
+            .unwrap();
+        let message: Value = serde_json::from_slice(&plaintext).unwrap();
+        message["body"]
+            .as_str()
+            .unwrap()
+            .split("token=")
+            .nth(1)
+            .unwrap()
+            .split_whitespace()
+            .next()
+            .unwrap()
+            .to_owned()
+    }
     pub async fn proof(&self, buyer: &Session, order: Uuid) -> Uuid {
         let mut bytes = std::io::Cursor::new(Vec::new());
         image::DynamicImage::new_rgb8(8, 8)
@@ -132,7 +172,7 @@ impl TestApp {
         }
     }
     pub async fn payment_config(&self) {
-        sqlx::query("INSERT INTO site_settings(key,value_json) VALUES('manual_payment',$1) ON CONFLICT(key) DO UPDATE SET value_json=EXCLUDED.value_json").bind(json!({"channel":"bank","payee":"TEST ONLY","account":"NOT A REAL ACCOUNT","instructions":"Integration test. Never transfer real money."})).execute(&self.state.pool).await.unwrap();
+        sqlx::query("INSERT INTO site_settings(setting_key,value_json) VALUES('manual_payment',?) ON DUPLICATE KEY UPDATE value_json=VALUES(value_json)").bind(json!({"channel":"bank","payee":"TEST ONLY","account":"NOT A REAL ACCOUNT","instructions":"Integration test. Never transfer real money."})).execute(&self.state.pool).await.unwrap();
     }
 }
 pub struct TestResponse {
@@ -150,11 +190,25 @@ pub struct Session {
 impl TestApp {
     pub async fn start() -> Self {
         let mut config = Config::from_env().expect("test environment");
+        config.email = Some(EmailConfig {
+            smtp_host: "127.0.0.1".into(),
+            smtp_port: 1025,
+            smtp_username: String::new(),
+            smtp_password: String::new(),
+            smtp_tls: false,
+            from: "DevStore Test <test@example.test>".into(),
+            outbox_key: [17_u8; 32],
+        });
+        config.mfa_encryption_key = Some([23_u8; 32]);
         config.s3_bucket = std::env::var("S3_BUCKET").unwrap();
         devstore_server::infrastructure::storage::create_bucket(&config)
             .await
             .expect("test S3 bucket");
         let state = AppState::with_pool(config, isolated_pool().await)
+            .await
+            .unwrap();
+        let _: String = redis::cmd("FLUSHDB")
+            .query_async(&mut state.redis.clone())
             .await
             .unwrap();
         let router = devstore_server::build_router(state.clone());
@@ -224,8 +278,29 @@ impl TestApp {
                 &[],
             )
             .await;
-        assert_eq!(r.status, 201, "{}", r.body);
-        self.session_from(&r).await
+        assert_eq!(r.status, 202, "{}", r.body);
+        let user_id: Uuid = sqlx::query_scalar("SELECT id FROM users WHERE email=?")
+            .bind(email.to_lowercase())
+            .fetch_one(&self.state.pool)
+            .await
+            .unwrap();
+        // Existing business-flow fixtures act as if their test mailbox completed verification.
+        sqlx::query("UPDATE users SET email_verified_at=UTC_TIMESTAMP(6) WHERE id=?")
+            .bind(user_id)
+            .execute(&self.state.pool)
+            .await
+            .unwrap();
+        let login = self
+            .request(
+                "POST",
+                "/api/v1/auth/login",
+                json!({"email":email,"password":"a-long-password-123"}),
+                None,
+                &[],
+            )
+            .await;
+        assert_eq!(login.status, 200, "{}", login.body);
+        self.session_from(&login).await
     }
     pub async fn session_from(&self, r: &TestResponse) -> Session {
         let cookie = r
@@ -251,50 +326,107 @@ impl TestApp {
         s
     }
     pub async fn admin(&self) -> Session {
-        let s = self.register().await;
+        let email = format!("admin-{}@example.test", Uuid::new_v4().simple());
+        let _old_session = self.register_as(&email).await;
+        let id: Uuid = sqlx::query_scalar("SELECT id FROM users WHERE email=?")
+            .bind(&email)
+            .fetch_one(&self.state.pool)
+            .await
+            .unwrap();
         sqlx::query(
-            "INSERT INTO user_roles(user_id,role_id) SELECT $1,id FROM roles WHERE code='admin'",
+            "INSERT INTO user_roles(user_id,role_id) SELECT ?,id FROM roles WHERE code='admin'",
         )
-        .bind(s.id)
+        .bind(id)
         .execute(&self.state.pool)
         .await
         .unwrap();
-        s
+        let (encoded, _) =
+            devstore_server::infrastructure::mfa::begin(&self.state.pool, &self.state.config, id)
+                .await
+                .unwrap();
+        let secret = data_encoding::BASE32_NOPAD
+            .decode(encoded.as_bytes())
+            .unwrap();
+        let counter = time::OffsetDateTime::now_utc()
+            .unix_timestamp()
+            .div_euclid(30) as u64;
+        let setup_code = devstore_server::infrastructure::mfa::totp_code(&secret, counter);
+        devstore_server::infrastructure::mfa::confirm(
+            &self.state.pool,
+            &self.state.config,
+            id,
+            &setup_code,
+            time::OffsetDateTime::now_utc(),
+        )
+        .await
+        .unwrap();
+        let code = devstore_server::infrastructure::mfa::totp_code(&secret, counter + 1);
+        let login = self
+            .request(
+                "POST",
+                "/api/v1/auth/login",
+                json!({"email":email,"password":"a-long-password-123","totp_code":code}),
+                None,
+                &[],
+            )
+            .await;
+        assert_eq!(login.status, 200, "{}", login.body);
+        self.session_from(&login).await
     }
 }
 
-pub async fn isolated_pool() -> PgPool {
-    let url = std::env::var("DATABASE_URL")
-        .expect("run through bash scripts/test-server.sh with test services running");
-    assert!(
-        url.contains("devstore_test"),
-        "integration tests must use the dedicated test database"
-    );
-    let root = PgPool::connect(&url)
-        .await
-        .expect("test PostgreSQL unavailable");
-    let schema = format!("t_{}", Uuid::new_v4().simple());
-    // Identifier is generated solely from UUID hex, never from a request.
-    sqlx::query(sqlx::AssertSqlSafe(format!("CREATE SCHEMA {schema}")))
-        .execute(&root)
-        .await
-        .unwrap();
-    let pool = PgPoolOptions::new()
+pub async fn isolated_pool() -> MySqlPool {
+    let url = database::test_database_url()
+        .expect("integration tests require MYSQL_TEST_DATABASE_URL targeting bz_ztore_test");
+    let pool = MySqlPoolOptions::new()
         .max_connections(24)
-        .after_connect(move |conn, _| {
-            let schema = schema.clone();
+        .after_connect(|connection, _| {
             Box::pin(async move {
-                sqlx::query("SELECT set_config('search_path',$1,false)")
-                    .bind(format!("{schema},public"))
-                    .execute(conn)
+                sqlx::query("SET time_zone = '+00:00'")
+                    .execute(connection)
                     .await?;
                 Ok(())
             })
         })
-        .connect(&url)
+        .connect(url.as_str())
+        .await
+        .expect("dedicated MySQL test database unavailable");
+    sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+    let mut connection = pool.acquire().await.unwrap();
+    sqlx::query("SET FOREIGN_KEY_CHECKS=0")
+        .execute(&mut *connection)
         .await
         .unwrap();
-    sqlx::migrate!("./migrations").run(&pool).await.unwrap();
-    root.close().await;
+    for table in [
+        "admin_recovery_codes",
+        "admin_mfa",
+        "email_outbox",
+        "auth_tokens",
+        "payment_submissions",
+        "file_objects",
+        "user_entitlements",
+        "order_requests",
+        "order_items",
+        "orders",
+        "tutorial_chapters",
+        "tutorials",
+        "products",
+        "categories",
+        "admin_audit_logs",
+        "user_sessions",
+        "user_roles",
+        "users",
+        "site_settings",
+    ] {
+        sqlx::query(sqlx::AssertSqlSafe(format!("TRUNCATE TABLE `{table}`")))
+            .execute(&mut *connection)
+            .await
+            .unwrap();
+    }
+    sqlx::query("SET FOREIGN_KEY_CHECKS=1")
+        .execute(&mut *connection)
+        .await
+        .unwrap();
+    drop(connection);
     pool
 }

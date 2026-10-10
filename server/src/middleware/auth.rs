@@ -41,7 +41,7 @@ pub async fn authenticate(state: &AppState, headers: &HeaderMap) -> ApiResult<Cu
     )
     .map_err(|_| AppError::unauthorized())?
     .claims;
-    let valid:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM user_sessions s JOIN users u ON u.id=s.user_id WHERE s.id=$1 AND s.user_id=$2 AND s.revoked_at IS NULL AND s.expires_at>now() AND u.status=1)").bind(claims.sid).bind(claims.sub).fetch_one(&state.pool).await?;
+    let valid:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM user_sessions s JOIN users u ON u.id=s.user_id WHERE s.id=? AND s.user_id=? AND s.revoked_at IS NULL AND s.expires_at>now() AND u.status=1)").bind(claims.sid).bind(claims.sub).fetch_one(&state.pool).await?;
     if !valid {
         return Err(AppError::unauthorized());
     }
@@ -85,6 +85,15 @@ impl FromRequestParts<AppState> for AdminUser {
         let user = CurrentUser::from_request_parts(parts, state).await?;
         if !user.is_admin {
             return Err(AppError::forbidden());
+        }
+        let fresh: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM user_sessions WHERE id=? AND mfa_method IN ('totp','recovery') AND mfa_verified_at>=DATE_SUB(UTC_TIMESTAMP(6),INTERVAL 5 MINUTE))")
+            .bind(user.session_id).fetch_one(&state.pool).await?;
+        if !fresh {
+            return Err(AppError::new(
+                axum::http::StatusCode::FORBIDDEN,
+                "ADMIN_MFA_REQUIRED",
+                "请重新进行管理员双重验证",
+            ));
         }
         Ok(Self(user))
     }

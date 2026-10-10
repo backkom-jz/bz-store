@@ -6,6 +6,30 @@ pub struct Credentials {
     pub email: String,
     pub password: String,
 }
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LoginCredentials {
+    pub email: String,
+    pub password: String,
+    #[serde(default)]
+    pub totp_code: Option<String>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TokenInput {
+    pub token: String,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ResetInput {
+    pub token: String,
+    pub password: String,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EmailInput {
+    pub email: String,
+}
 #[derive(Serialize, sqlx::FromRow, Clone, Debug, utoipa::ToSchema)]
 pub struct PublicUser {
     pub id: Uuid,

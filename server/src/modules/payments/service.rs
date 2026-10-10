@@ -9,17 +9,17 @@ use crate::{
     state::AppState,
 };
 use serde_json::{Value, json};
-use sqlx::{Row, postgres::PgRow};
+use sqlx::{Row, mysql::MySqlRow};
 use uuid::Uuid;
 // Every mutation locks order first, then proof. Upload and cancellation use the same order lock.
-async fn locked(tx: &mut sqlx::PgConnection, proof: Uuid) -> ApiResult<(PgRow, PgRow)> {
-    let id: Uuid = sqlx::query_scalar("SELECT order_id FROM payment_submissions WHERE id=$1")
+async fn locked(tx: &mut sqlx::MySqlConnection, proof: Uuid) -> ApiResult<(MySqlRow, MySqlRow)> {
+    let id: Uuid = sqlx::query_scalar("SELECT order_id FROM payment_submissions WHERE id=?")
         .bind(proof)
         .fetch_optional(&mut *tx)
         .await?
         .ok_or_else(AppError::missing)?;
-    let order=sqlx::query("SELECT id,user_id,status,amount_cents,payment_instructions FROM orders WHERE id=$1 FOR UPDATE").bind(id).fetch_one(&mut *tx).await?;
-    let payment = sqlx::query("SELECT id,status FROM payment_submissions WHERE id=$1 FOR UPDATE")
+    let order=sqlx::query("SELECT id,user_id,status,amount_cents,payment_instructions FROM orders WHERE id=? FOR UPDATE").bind(id).fetch_one(&mut *tx).await?;
+    let payment = sqlx::query("SELECT id,status FROM payment_submissions WHERE id=? FOR UPDATE")
         .bind(proof)
         .fetch_one(&mut *tx)
         .await?;
@@ -62,8 +62,8 @@ pub async fn approve(
     if config["channel"].as_str() != Some(&input.payment_channel) {
         return Err(AppError::invalid("收款渠道与订单付款说明不一致"));
     }
-    sqlx::query("UPDATE payment_submissions SET status='approved',reviewed_by=$1,reviewed_at=NOW(),actual_amount_cents=$2,payment_channel=$3,transaction_reference=$4 WHERE id=$5").bind(actor.id).bind(input.actual_amount_cents).bind(&input.payment_channel).bind(reference).bind(proof).execute(&mut *tx).await?;
-    let item = sqlx::query("SELECT id,product_id,product_type FROM order_items WHERE order_id=$1")
+    sqlx::query("UPDATE payment_submissions SET status='approved',reviewed_by=?,reviewed_at=NOW(),actual_amount_cents=?,payment_channel=?,transaction_reference=? WHERE id=?").bind(actor.id).bind(input.actual_amount_cents).bind(&input.payment_channel).bind(reference).bind(proof).execute(&mut *tx).await?;
+    let item = sqlx::query("SELECT id,product_id,product_type FROM order_items WHERE order_id=?")
         .bind(id)
         .fetch_one(&mut *tx)
         .await?;
@@ -77,7 +77,7 @@ pub async fn approve(
         item.get("product_id"),
     )
     .await?;
-    sqlx::query("UPDATE orders SET status='completed',paid_at=NOW() WHERE id=$1")
+    sqlx::query("UPDATE orders SET status='completed',paid_at=NOW() WHERE id=?")
         .bind(id)
         .execute(&mut *tx)
         .await?;
@@ -109,8 +109,8 @@ pub async fn reject(
     {
         return Err(AppError::conflict("凭证或订单已被处理"));
     }
-    sqlx::query("UPDATE payment_submissions SET status='rejected',reviewed_by=$1,reviewed_at=NOW(),review_note=$2 WHERE id=$3").bind(actor.id).bind(reason.trim()).bind(proof).execute(&mut *tx).await?;
-    sqlx::query("UPDATE orders SET status='pending_payment',expires_at=GREATEST(expires_at,NOW()+INTERVAL '24 hours') WHERE id=$1").bind(id).execute(&mut *tx).await?;
+    sqlx::query("UPDATE payment_submissions SET status='rejected',reviewed_by=?,reviewed_at=NOW(),review_note=? WHERE id=?").bind(actor.id).bind(reason.trim()).bind(proof).execute(&mut *tx).await?;
+    sqlx::query("UPDATE orders SET status='pending_payment',expires_at=GREATEST(expires_at,DATE_ADD(UTC_TIMESTAMP(6),INTERVAL 24 HOUR)) WHERE id=?").bind(id).execute(&mut *tx).await?;
     audit::record(
         &mut tx,
         actor.id,
@@ -124,7 +124,7 @@ pub async fn reject(
     Ok(result)
 }
 pub async fn list(state: &AppState, q: Pagination) -> ApiResult<Value> {
-    let items:Vec<Value>=sqlx::query_scalar("SELECT (to_jsonb(p)-'file_id')||jsonb_build_object('order_no',o.order_no,'order_id',o.id,'amount_cents',o.amount_cents,'payment_channel_expected',o.payment_instructions->>'channel','product_title',i.product_title,'user_email',u.email,'overdue',p.status='pending' AND p.created_at<NOW()-INTERVAL '24 hours') FROM payment_submissions p JOIN orders o ON o.id=p.order_id JOIN order_items i ON i.order_id=o.id JOIN users u ON u.id=o.user_id WHERE ($1='' OR p.status=$1) AND (position(lower($2) in lower(o.order_no))>0 OR position(lower($2) in lower(u.email))>0) ORDER BY p.created_at DESC,p.id DESC LIMIT $3 OFFSET $4").bind(&q.status).bind(&q.q).bind(q.size).bind(q.offset).fetch_all(&state.pool).await?;
-    let total:i64=sqlx::query_scalar("SELECT count(*) FROM payment_submissions p JOIN orders o ON o.id=p.order_id JOIN users u ON u.id=o.user_id WHERE ($1='' OR p.status=$1) AND (position(lower($2) in lower(o.order_no))>0 OR position(lower($2) in lower(u.email))>0)").bind(&q.status).bind(&q.q).fetch_one(&state.pool).await?;
+    let items:Vec<Value>=sqlx::query_scalar("SELECT JSON_MERGE_PATCH(JSON_OBJECT('id',BIN_TO_UUID(p.id),'order_id',BIN_TO_UUID(p.order_id),'status',p.status,'reviewed_by',BIN_TO_UUID(p.reviewed_by),'reviewed_at',p.reviewed_at,'review_note',p.review_note,'actual_amount_cents',p.actual_amount_cents,'payment_channel',p.payment_channel,'transaction_reference',p.transaction_reference,'created_at',p.created_at,'updated_at',p.updated_at),JSON_OBJECT('order_no',o.order_no,'amount_cents',o.amount_cents,'payment_channel_expected',JSON_UNQUOTE(JSON_EXTRACT(o.payment_instructions,'$.channel')),'product_title',i.product_title,'user_email',u.email,'overdue',p.status='pending' AND p.created_at<UTC_TIMESTAMP(6)-INTERVAL 24 HOUR)) FROM payment_submissions p JOIN orders o ON o.id=p.order_id JOIN order_items i ON i.order_id=o.id JOIN users u ON u.id=o.user_id WHERE (?='' OR p.status=?) AND (LOCATE(LOWER(?),LOWER(o.order_no))>0 OR LOCATE(LOWER(?),LOWER(u.email))>0) ORDER BY p.created_at DESC,p.id DESC LIMIT ? OFFSET ?").bind(&q.status).bind(&q.status).bind(&q.q).bind(&q.q).bind(q.size).bind(q.offset).fetch_all(&state.pool).await?;
+    let total:i64=sqlx::query_scalar("SELECT count(*) FROM payment_submissions p JOIN orders o ON o.id=p.order_id JOIN users u ON u.id=o.user_id WHERE (?='' OR p.status=?) AND (LOCATE(LOWER(?),LOWER(o.order_no))>0 OR LOCATE(LOWER(?),LOWER(u.email))>0)").bind(&q.status).bind(&q.status).bind(&q.q).bind(&q.q).fetch_one(&state.pool).await?;
     Ok(json!({"items":items,"total":total,"page":q.page,"page_size":q.size}))
 }

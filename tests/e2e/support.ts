@@ -2,8 +2,15 @@ import {test as base,expect,request,type APIRequestContext,type Page} from '@pla
 import {execFileSync} from 'node:child_process';
 import {readFileSync} from 'node:fs';
 export const origin='http://127.0.0.1:18088';
+const mailpit='http://127.0.0.1:18025';
 export const receiptPng=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==','base64');
-export function credentials(){return JSON.parse(readFileSync('.runtime/e2e.json','utf8')) as {email:string;password:string};}
+let lastAdminCounter=0;
+export function credentials(){const value=JSON.parse(readFileSync('.runtime/e2e.json','utf8')) as {email:string;password:string;totpSecret:string;mfaCounter:number};lastAdminCounter=Math.max(lastAdminCounter,value.mfaCounter);return value;}
+export async function nextTotpCode(secret:string){
+ const alphabet='ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';let bits=0,acc=0;const bytes:number[]=[];for(const char of secret){acc=(acc<<5)|alphabet.indexOf(char);bits+=5;if(bits>=8){bits-=8;bytes.push((acc>>bits)&255);}}
+ let counter=Math.floor(Date.now()/30000);while(counter<=lastAdminCounter){await new Promise(resolve=>setTimeout(resolve,Math.max(100,30000-(Date.now()%30000)+100)));counter=Math.floor(Date.now()/30000);}
+ const data=Buffer.alloc(8);data.writeBigUInt64BE(BigInt(counter));const hmac=await import('node:crypto').then(({createHmac})=>createHmac('sha1',Buffer.from(bytes)).update(data).digest());const offset=hmac[19]&15;const value=(((hmac[offset]&127)<<24)|(hmac[offset+1]<<16)|(hmac[offset+2]<<8)|hmac[offset+3])%1000000;lastAdminCounter=counter;return String(value).padStart(6,'0');
+}
 export const test=base.extend<{resetLimits:void}>({resetLimits:[async({},use)=>{
  execFileSync('docker',['compose','-f','deploy/docker-compose.test.yml','exec','-T','redis','redis-cli','FLUSHDB'],{stdio:'pipe'});
  await use();
@@ -12,9 +19,22 @@ export {expect};
 export function hydrated(page:Page){
  return page.waitForFunction(()=>Boolean((document.querySelector('#__nuxt') as (HTMLElement & {__vue_app__?:unknown}) | null)?.__vue_app__));
 }
+export async function verifyMailbox(email:string,post:(path:string,data:unknown)=>Promise<{status:()=>number;text:()=>Promise<string>}>){
+ const deadline=Date.now()+30000;let token='';
+ while(Date.now()<deadline&&!token){
+  const index=await fetch(mailpit+'/api/v1/messages');
+  if(index.ok){const body=await index.json() as {messages?:Array<{ID:string;To?:Array<{Address:string}>}>};
+   const message=body.messages?.find(item=>item.To?.some(to=>to.Address.toLowerCase()===email.toLowerCase()));
+   if(message){const detail=await fetch(mailpit+'/api/v1/message/'+message.ID);if(detail.ok){const mail=await detail.json() as {Text?:string};token=mail.Text?.match(/verify-email\?token=([^\s]+)/)?.[1]??'';}}
+  }
+  if(!token)await new Promise(resolve=>setTimeout(resolve,250));
+ }
+ if(!token)throw new Error('verification email did not arrive in local Mailpit');
+ const response=await post('/api/v1/auth/verify-email',{token});expect(response.status(),await response.text()).toBe(200);
+}
 export async function adminApi(){
  const api=await request.newContext({baseURL:origin,extraHTTPHeaders:{Origin:origin}});
- const login=await api.post('/api/v1/auth/login',{data:credentials()});expect(login.status()).toBe(200);
+ const admin=credentials();const login=await api.post('/api/v1/auth/login',{data:{email:admin.email,password:admin.password,totp_code:await nextTotpCode(admin.totpSecret)}});expect(login.status(),await login.text()).toBe(200);
  const csrf=await api.get('/api/v1/auth/csrf');const token=(await csrf.json()).data.csrf_token as string;
  return {api,write:async(method:'post'|'patch',path:string,data:unknown)=>{const response=await api[method]('/api/v1'+path,{data,headers:{'X-CSRF-Token':token}});expect(response.ok(),await response.text()).toBeTruthy();return (await response.json()).data;}};
 }

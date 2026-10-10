@@ -7,7 +7,13 @@ default-run = "devstore-server"
 [dependencies]
 axum = { version = "0.8", features = ["multipart", "macros"] }
 tokio = { version = "1", features = ["full"] }
-sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "tls-rustls", "postgres", "mysql", "uuid", "time", "json", "migrate", "macros"] }
+async-trait = "0.1"
+aes-gcm = "0.10"
+lettre = { version = "0.11", default-features = false, features = ["builder", "smtp-transport", "tokio1-rustls-tls"] }
+sha1 = "0.10"
+data-encoding = "2"
+thiserror = "2"
+sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "tls-rustls", "mysql", "uuid", "time", "json", "migrate", "macros"] }
 url = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

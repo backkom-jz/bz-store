@@ -1,0 +1,5 @@
+<script setup lang="ts">
+useSeoMeta({title:'找回密码 · DevStore'});const api=useApi();const email=ref('');const message=ref('');const error=ref('');const pending=ref(false);
+async function submit(){pending.value=true;error.value='';try{const result=await api.request<{message:string}>('/auth/password/forgot',{method:'POST',body:{email:email.value}});message.value=result.message;}catch(e){error.value=e instanceof Error?e.message:'请求失败，请重试';}finally{pending.value=false;}}
+</script>
+<template><div class="container"><section class="auth-page panel"><span class="eyebrow">ACCOUNT RECOVERY</span><h1>找回密码</h1><p class="muted">输入注册邮箱。如果账号可用，我们会发送重置链接。</p><form v-if="!message" @submit.prevent="submit"><div class="field"><label for="email">邮箱</label><input id="email" v-model="email" type="email" required autocomplete="email" maxlength="255"></div><p v-if="error" role="alert" class="error">{{ error }}</p><button class="btn" :disabled="pending">{{ pending?'正在提交…':'发送重置邮件' }}</button></form><p v-else role="status" class="muted">{{ message }}</p><NuxtLink class="text-link" to="/login">返回登录</NuxtLink></section></div></template>

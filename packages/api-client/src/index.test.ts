@@ -34,6 +34,15 @@ describe('API session recovery',()=>{
   await expect(api.request('//attacker.example/steal')).rejects.toThrow();
   expect(transport).toHaveBeenCalledTimes(1);
  });
+ it('sends anonymous token-based auth mutations without requesting a session CSRF cookie',async()=>{
+  const transport=vi.fn(async(_url:RequestInfo|URL,_init?:RequestInit)=>response(200,{accepted:true}));
+  const api=createApiClient({baseUrl:'/api/v1',browser:true,fetch:transport});
+  for(const path of ['/auth/verify-email','/auth/verify-email/resend','/auth/password/forgot','/auth/password/reset']){
+   await api.request(path,{method:'POST',body:{token:'one-time',email:'person@example.test',password:'new-password-123'}});
+  }
+  expect(transport).toHaveBeenCalledTimes(4);
+  expect(transport.mock.calls.map(([url])=>String(url))).toEqual(['/api/v1/auth/verify-email','/api/v1/auth/verify-email/resend','/api/v1/auth/password/forgot','/api/v1/auth/password/reset']);
+ });
  it('rejects external and encoded return paths',()=>{
   for(const value of ['https://evil.test','//evil.test','/\\evil.test','/%2fevil.test','javascript:alert(1)',null])expect(safeReturnTo(value)).toBe('/');
   expect(safeReturnTo('/checkout/abc?source=login')).toBe('/checkout/abc?source=login');

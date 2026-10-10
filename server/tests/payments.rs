@@ -90,7 +90,7 @@ async fn it_review_rollback_reject_and_resubmit() {
     app.payment_config().await;
     let order = app.order(&buyer, course.product).await;
     let proof = app.proof(&buyer, order).await;
-    // Only this isolated test schema gets a fault injection constraint.
+    // Only the isolated MySQL test database receives this fault-injection constraint.
     sqlx::query("ALTER TABLE admin_audit_logs ADD CONSTRAINT reject_payment_audit CHECK(action<>'payment.approve')").execute(&app.state.pool).await.unwrap();
     let r = app
         .request(
@@ -118,7 +118,7 @@ async fn it_review_rollback_reject_and_resubmit() {
         .await;
     assert_eq!(current.body["data"]["status"], "payment_review");
     assert_eq!(current.body["data"]["payments"][0]["status"], "pending");
-    sqlx::query("ALTER TABLE admin_audit_logs DROP CONSTRAINT reject_payment_audit")
+    sqlx::query("ALTER TABLE admin_audit_logs DROP CHECK reject_payment_audit")
         .execute(&app.state.pool)
         .await
         .unwrap();
@@ -129,11 +129,13 @@ async fn it_review_rollback_reject_and_resubmit() {
             .status,
         422
     );
-    sqlx::query("UPDATE orders SET expires_at=NOW()-INTERVAL '2 days' WHERE id=$1")
-        .bind(order)
-        .execute(&app.state.pool)
-        .await
-        .unwrap();
+    sqlx::query(
+        "UPDATE orders SET expires_at=DATE_SUB(UTC_TIMESTAMP(6),INTERVAL 2 DAY) WHERE id=?",
+    )
+    .bind(order)
+    .execute(&app.state.pool)
+    .await
+    .unwrap();
     let before = time::OffsetDateTime::now_utc();
     let rejected = app
         .request(
@@ -146,7 +148,7 @@ async fn it_review_rollback_reject_and_resubmit() {
         .await;
     assert_eq!(rejected.status, 200, "{}", rejected.body);
     let expires: time::OffsetDateTime =
-        sqlx::query_scalar("SELECT expires_at FROM orders WHERE id=$1")
+        sqlx::query_scalar("SELECT expires_at FROM orders WHERE id=?")
             .bind(order)
             .fetch_one(&app.state.pool)
             .await

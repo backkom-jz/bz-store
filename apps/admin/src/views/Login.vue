@@ -8,6 +8,7 @@ const route = useRoute();
 const router = useRouter();
 const email = ref('');
 const password = ref('');
+const totpCode = ref('');
 const pending = ref(false);
 const error = ref('');
 
@@ -15,7 +16,7 @@ async function submit() {
   pending.value = true;
   error.value = '';
   try {
-    await login(email.value, password.value);
+    await login(email.value, password.value, totpCode.value);
     password.value = '';
     await router.replace(safeReturnTo(route.query.returnTo));
   } catch (reason) {
@@ -41,6 +42,10 @@ async function submit() {
       <div class="field">
         <label for="password">密码</label>
         <input id="password" v-model="password" type="password" autocomplete="current-password" required minlength="12" maxlength="128">
+      </div>
+      <div class="field">
+        <label for="totp">动态验证码或恢复码</label>
+        <input id="totp" v-model="totpCode" autocomplete="one-time-code" required minlength="6" maxlength="64">
       </div>
       <p v-if="error" class="error" role="alert">{{ error }}</p>
       <button class="btn" type="submit" :disabled="pending">{{ pending ? '正在登录…' : '登录后台' }}</button>

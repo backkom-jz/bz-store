@@ -1,0 +1,6 @@
+<script setup lang="ts">
+useSeoMeta({title:'重置密码 · DevStore'});const route=useRoute();const router=useRouter();const api=useApi();const password=ref('');const message=ref('');const error=ref('');const pending=ref(false);const token=ref('');
+onMounted(async()=>{token.value=typeof route.query.token==='string'?route.query.token:'';if(token.value)await router.replace('/reset-password');});
+async function submit(){pending.value=true;error.value='';try{await api.request('/auth/password/reset',{method:'POST',body:{token:token.value,password:password.value}});token.value='';message.value='密码已更新，请使用新密码登录。';}catch(e){error.value=e instanceof Error?e.message:'链接无效或已过期';}finally{pending.value=false;}}
+</script>
+<template><div class="container"><section class="auth-page panel"><span class="eyebrow">RESET PASSWORD</span><h1>设置新密码</h1><form v-if="!message" @submit.prevent="submit"><div class="field"><label for="password">新密码</label><input id="password" v-model="password" type="password" minlength="12" maxlength="128" required autocomplete="new-password"></div><p v-if="error" role="alert" class="error">{{ error }}</p><button class="btn" :disabled="pending">{{ pending?'正在更新…':'更新密码' }}</button></form><p v-else role="status" class="muted">{{ message }}</p><NuxtLink class="text-link" to="/login">前往登录</NuxtLink></section></div></template>

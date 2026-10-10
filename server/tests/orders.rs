@@ -24,11 +24,11 @@ async fn it_expiry_workers_preserve_reviewing_orders() {
         assert_eq!(result.status, 201, "{}", result.body);
         ids.push(Uuid::parse_str(result.body["data"]["id"].as_str().unwrap()).unwrap());
     }
-    sqlx::query("UPDATE orders SET expires_at=NOW()-INTERVAL '1 hour'")
+    sqlx::query("UPDATE orders SET expires_at=DATE_SUB(UTC_TIMESTAMP(6),INTERVAL 1 HOUR)")
         .execute(&app.state.pool)
         .await
         .unwrap();
-    sqlx::query("UPDATE orders SET status='payment_review' WHERE id=$1")
+    sqlx::query("UPDATE orders SET status='payment_review' WHERE id=?")
         .bind(ids[1])
         .execute(&app.state.pool)
         .await

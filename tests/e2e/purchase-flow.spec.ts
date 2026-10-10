@@ -1,5 +1,5 @@
 import {mkdirSync,writeFileSync} from 'node:fs';
-import {test,expect,adminApi,makeCourse,origin,receiptPng,credentials,hydrated} from './support';
+import {test,expect,adminApi,makeCourse,origin,receiptPng,credentials,hydrated,verifyMailbox,nextTotpCode} from './support';
 
 test('buyer can resubmit after rejection and then read the paid chapter',async({page,browser})=>{
  test.setTimeout(180000);
@@ -35,6 +35,12 @@ test('buyer can resubmit after rejection and then read the paid chapter',async({
  await page.getByLabel('邮箱').fill(buyerEmail);
  await page.getByLabel('密码',{exact:true}).fill(buyerPassword);
  await page.getByRole('button',{name:'创建账号'}).click();
+ await expect(page.getByRole('status')).toContainText('请检查你的邮箱');
+ await verifyMailbox(buyerEmail,(path,data)=>page.request.post(origin+path,{data,headers:{Origin:origin}}));
+ await page.goto('/login?returnTo='+encodeURIComponent('/products/'+course.slug));
+ await page.getByLabel('邮箱').fill(buyerEmail);
+ await page.getByLabel('密码',{exact:true}).fill(buyerPassword);
+ await page.getByRole('button',{name:'登录'}).click();
  await expect(page).toHaveURL(new RegExp('/products/'+course.slug));
  await hydrated(page);
  await page.getByRole('button',{name:'购买教程'}).click();
@@ -65,6 +71,7 @@ test('buyer can resubmit after rejection and then read the paid chapter',async({
  await adminPage.goto('/admin/login');
  await adminPage.getByLabel('邮箱').fill(operator.email);
  await adminPage.getByLabel('密码').fill(operator.password);
+ await adminPage.getByLabel('动态验证码或恢复码').fill(await nextTotpCode(operator.totpSecret));
  await adminPage.getByRole('button',{name:'登录后台'}).click();
  await expect(adminPage.getByRole('heading',{name:'付款审核'})).toBeVisible();
  await adminPage.getByLabel('搜索订单号或邮箱').fill(orderNo);
@@ -119,6 +126,13 @@ test('buyer can resubmit after rejection and then read the paid chapter',async({
  await otherPage.getByLabel('邮箱').fill(`other-${crypto.randomUUID()}@example.test`);
  await otherPage.getByLabel('密码',{exact:true}).fill(buyerPassword);
  await otherPage.getByRole('button',{name:'创建账号'}).click();
+ const otherEmail=await otherPage.getByLabel('邮箱').inputValue();
+ await expect(otherPage.getByRole('status')).toContainText('请检查你的邮箱');
+ await verifyMailbox(otherEmail,(path,data)=>otherPage.request.post(origin+path,{data,headers:{Origin:origin}}));
+ await otherPage.goto('/login');
+ await otherPage.getByLabel('邮箱').fill(otherEmail);
+ await otherPage.getByLabel('密码',{exact:true}).fill(buyerPassword);
+ await otherPage.getByRole('button',{name:'登录'}).click();
  await expect(otherPage.getByRole('button',{name:'退出登录'})).toBeVisible();
  const otherChapter=await otherPage.request.get(`/api/v1/tutorials/${course.tutorial.id}/chapters/${course.paid.id}`);
  expect(otherChapter.status()).toBe(403);

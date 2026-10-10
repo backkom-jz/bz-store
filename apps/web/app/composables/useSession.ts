@@ -4,7 +4,8 @@ export function useSession(){
  const error=useState<string>('session-error',()=>'');
  const nuxt=useNuxtApp();const api=useApi();
  async function login(email:string,password:string,register=false){
-  const next=await api.request<PublicUser>(register?'/auth/register':'/auth/login',{method:'POST',body:{email,password}});
+  if(register){const accepted=await api.request<{accepted:boolean}>('/auth/register',{method:'POST',body:{email,password}});return accepted;}
+  const next=await api.request<PublicUser>('/auth/login',{method:'POST',body:{email,password}});
   clearNuxtData(key=>key.startsWith('private:'));user.value=next;error.value='';nuxt.$announceSession?.();return next;
  }
  async function logout(){

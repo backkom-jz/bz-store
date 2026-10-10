@@ -1,0 +1,77 @@
+server {
+    listen 80;
+    server_name store.bengzi.cn;
+    return 308 https://store.bengzi.cn$request_uri;
+}
+
+server {
+    listen 443 ssl;
+    http2 on;
+    server_name store.bengzi.cn;
+    ssl_certificate /etc/nginx/tls/fullchain.pem;
+    ssl_certificate_key /etc/nginx/tls/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    client_max_body_size 6m;
+    add_header Strict-Transport-Security "max-age=31536000" always;
+    add_header X-Content-Type-Options nosniff always;
+    add_header Referrer-Policy strict-origin-when-cross-origin always;
+
+    location /api/ {
+        proxy_pass http://${API_UPSTREAM};
+        proxy_http_version 1.1;
+        proxy_set_header Host $http_host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_read_timeout 45s;
+        proxy_no_cache 1;
+        error_page 413 = @too_large;
+    }
+    location @too_large {
+        default_type application/json;
+        return 413 '{"code":"FILE_TOO_LARGE","message":"上传请求超过 6 MiB","data":null,"request_id":"$request_id"}';
+    }
+    location = /admin { return 308 /admin/; }
+    location /admin/ {
+        alias /srv/admin/;
+        try_files $uri $uri/ @admin_spa;
+        add_header Cache-Control "private, no-store" always;
+        add_header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; connect-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'" always;
+        add_header X-Content-Type-Options nosniff always;
+    }
+    location @admin_spa {
+        root /srv/admin;
+        try_files /index.html =404;
+        add_header Cache-Control "private, no-store" always;
+        add_header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; connect-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'" always;
+    }
+    location / {
+        proxy_pass http://${WEB_UPSTREAM};
+        proxy_http_version 1.1;
+        proxy_set_header Host $http_host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_no_cache 1;
+        add_header Cache-Control "private, no-store" always;
+        add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; connect-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'" always;
+        add_header X-Content-Type-Options nosniff always;
+    }
+    location = /verify-email {
+        access_log off;
+        proxy_pass http://${WEB_UPSTREAM};
+        proxy_set_header Host $http_host;
+        proxy_set_header X-Forwarded-Proto https;
+        add_header Cache-Control "private, no-store" always;
+        add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; connect-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'" always;
+    }
+    location = /reset-password {
+        access_log off;
+        proxy_pass http://${WEB_UPSTREAM};
+        proxy_set_header Host $http_host;
+        proxy_set_header X-Forwarded-Proto https;
+        add_header Cache-Control "private, no-store" always;
+        add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; connect-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'" always;
+    }
+}

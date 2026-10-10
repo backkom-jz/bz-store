@@ -26,10 +26,6 @@ fn test_database_url_accepts_dedicated_test_database() {
 
 #[tokio::test]
 async fn mysql_ci_service_responds_only_for_the_test_database() {
-    if std::env::var_os("MYSQL_TEST_DATABASE_URL").is_none() {
-        // Local runs need not have a MySQL daemon; CI provides this variable.
-        return;
-    }
     let url = database::test_database_url().expect("configured MySQL target must be safe");
     let pool = sqlx::mysql::MySqlPoolOptions::new()
         .max_connections(1)

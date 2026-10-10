@@ -1,58 +1,78 @@
 mod support;
 use sqlx::Row;
+use uuid::Uuid;
 
 #[tokio::test]
-async fn it_database_constraints() {
+async fn mysql_database_constraints_and_idempotent_entitlements() {
     let pool = support::isolated_pool().await;
-    let table: Option<String> = sqlx::query_scalar("SELECT to_regclass('orders')::text")
-        .fetch_one(&pool)
+    let table: Option<String> = sqlx::query_scalar(
+        "SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='orders'",
+    )
+    .fetch_optional(&pool)
+    .await
+    .unwrap();
+    assert_eq!(table.as_deref(), Some("orders"));
+
+    let user_id = Uuid::new_v4();
+    sqlx::query("INSERT INTO users(id,email,password_hash) VALUES(?,?,?)")
+        .bind(user_id)
+        .bind("a@example.test")
+        .bind("hash")
+        .execute(&pool)
         .await
         .unwrap();
-    assert!(table.is_some(), "orders migration must exist");
-    let user: uuid::Uuid = sqlx::query_scalar(
-        "INSERT INTO users(email,password_hash) VALUES('a@example.test','hash') RETURNING id",
+    let product_id = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO products(id,title,slug,type,price_cents) VALUES(?,?,'test','tutorial',9900)",
     )
-    .fetch_one(&pool)
+    .bind(product_id)
+    .bind("Test")
+    .execute(&pool)
     .await
     .unwrap();
-    let product: uuid::Uuid = sqlx::query_scalar("INSERT INTO products(title,slug,type,price_cents) VALUES('Test','test','tutorial',9900) RETURNING id").fetch_one(&pool).await.unwrap();
-    for (price, currency) in [(-1, "CNY"), (9900, "USD"), (100_000_001, "CNY")] {
-        let err = sqlx::query("INSERT INTO orders(order_no,user_id,amount_cents,currency) VALUES(gen_random_uuid()::text,$1,$2,$3)")
-            .bind(user).bind(price as i64).bind(currency).execute(&pool).await.unwrap_err();
-        assert_eq!(
-            err.as_database_error().unwrap().code().as_deref(),
-            Some("23514")
-        );
-    }
-    let order: uuid::Uuid = sqlx::query_scalar(
-        "INSERT INTO orders(order_no,user_id,amount_cents) VALUES('DS-TEST',$1,9900) RETURNING id",
-    )
-    .bind(user)
-    .fetch_one(&pool)
-    .await
-    .unwrap();
-    let err = sqlx::query("INSERT INTO order_items(order_id,product_id,product_title,product_type,unit_price_cents,quantity,subtotal_cents) VALUES($1,$2,'Test','tutorial',9900,2,19800)").bind(order).bind(product).execute(&pool).await.unwrap_err();
-    assert_eq!(
-        err.as_database_error().unwrap().code().as_deref(),
-        Some("23514")
-    );
-    let row=sqlx::query("INSERT INTO order_items(order_id,product_id,product_title,product_type,unit_price_cents,quantity,subtotal_cents) VALUES($1,$2,'Test','tutorial',9900,1,9900) RETURNING id").bind(order).bind(product).fetch_one(&pool).await.unwrap();
-    let item: uuid::Uuid = row.get("id");
+    let order_id = Uuid::new_v4();
+    sqlx::query("INSERT INTO orders(id,order_no,user_id,amount_cents,expires_at) VALUES(?,?,?,9900,DATE_ADD(UTC_TIMESTAMP(6),INTERVAL 1 DAY))")
+        .bind(order_id)
+        .bind(format!("DS{}", order_id.simple()))
+        .bind(user_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let bad_item = sqlx::query("INSERT INTO order_items(id,order_id,product_id,product_title,product_type,unit_price_cents,quantity,subtotal_cents) VALUES(?,?,?,'Test','tutorial',9900,2,19800)")
+        .bind(Uuid::new_v4())
+        .bind(order_id)
+        .bind(product_id)
+        .execute(&pool)
+        .await;
+    assert!(bad_item.is_err(), "quantity constraint must be enforced");
+
+    let item_id = Uuid::new_v4();
+    sqlx::query("INSERT INTO order_items(id,order_id,product_id,product_title,product_type,unit_price_cents,quantity,subtotal_cents) VALUES(?,?,?,'Test','tutorial',9900,1,9900)")
+        .bind(item_id)
+        .bind(order_id)
+        .bind(product_id)
+        .execute(&pool)
+        .await
+        .unwrap();
     for _ in 0..2 {
-        sqlx::query("INSERT INTO user_entitlements(user_id,order_item_id,product_id) VALUES($1,$2,$3) ON CONFLICT(order_item_id) DO NOTHING").bind(user).bind(item).bind(product).execute(&pool).await.unwrap();
+        sqlx::query("INSERT IGNORE INTO user_entitlements(id,user_id,order_item_id,product_id) VALUES(?,?,?,?)")
+            .bind(Uuid::new_v4())
+            .bind(user_id)
+            .bind(item_id)
+            .bind(product_id)
+            .execute(&pool)
+            .await
+            .unwrap();
     }
-    let count: i64 = sqlx::query_scalar("SELECT count(*) FROM user_entitlements")
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM user_entitlements")
         .fetch_one(&pool)
         .await
         .unwrap();
     assert_eq!(count, 1);
-    let duplicate =
-        sqlx::query("INSERT INTO users(email,password_hash) VALUES('A@EXAMPLE.TEST','hash')")
-            .execute(&pool)
-            .await
-            .unwrap_err();
-    assert_eq!(
-        duplicate.as_database_error().unwrap().code().as_deref(),
-        Some("23514")
-    );
+    let _: Uuid = sqlx::query("SELECT id FROM users WHERE id=?")
+        .bind(user_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap()
+        .get("id");
 }

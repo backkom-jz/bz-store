@@ -21,7 +21,7 @@ async fn it_demo_seed_is_explicit_idempotent_and_has_no_payment_account() {
     assert_eq!(a["price_cents"], 9900);
     assert_eq!(a["is_demo"], true);
     let count: i64 =
-        sqlx::query_scalar("SELECT count(*) FROM site_settings WHERE key='manual_payment'")
+        sqlx::query_scalar("SELECT count(*) FROM site_settings WHERE setting_key='manual_payment'")
             .fetch_one(&app.state.pool)
             .await
             .unwrap();

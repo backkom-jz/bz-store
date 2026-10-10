@@ -1,0 +1,14 @@
+name: devstore
+services:
+  gateway:
+    ports: !override
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/public.conf.template:/etc/nginx/templates/default.conf.template:ro
+      - ${TLS_CERT_DIR:?Set TLS_CERT_DIR to a directory containing fullchain.pem and privkey.pem}:/etc/nginx/tls:ro
+  api:
+    environment:
+      S3_ENDPOINT: ${S3_ENDPOINT:?Set S3_ENDPOINT to the HTTPS object-storage endpoint}
+      SITE_URL: https://store.bengzi.cn
+      APP_ENV: production

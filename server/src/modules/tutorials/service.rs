@@ -18,11 +18,11 @@ pub async fn chapter(
 ) -> ApiResult<Value> {
     let user = actor.map(|a| a.id);
     // Body is selected only when authorization is true in this same SQL statement.
-    let content:Option<Value>=sqlx::query_scalar("SELECT jsonb_build_object('id',c.id,'title',c.title,'content_md',c.content_md) FROM tutorial_chapters c JOIN tutorials t ON t.id=c.tutorial_id JOIN products p ON p.id=t.product_id WHERE c.id=$1 AND t.id=$2 AND c.status='published' AND t.status='published' AND ((c.is_preview AND p.status='published') OR EXISTS(SELECT 1 FROM user_entitlements e WHERE e.user_id=$3 AND e.product_id=p.id AND e.status='active'))").bind(cid).bind(tid).bind(user).fetch_optional(&state.pool).await?;
+    let content:Option<Value>=sqlx::query_scalar("SELECT JSON_OBJECT('id',BIN_TO_UUID(c.id),'title',c.title,'content_md',c.content_md) FROM tutorial_chapters c JOIN tutorials t ON t.id=c.tutorial_id JOIN products p ON p.id=t.product_id WHERE c.id=? AND t.id=? AND c.status='published' AND t.status='published' AND ((c.is_preview AND p.status='published') OR EXISTS(SELECT 1 FROM user_entitlements e WHERE e.user_id=? AND e.product_id=p.id AND e.status='active'))").bind(cid).bind(tid).bind(user).fetch_optional(&state.pool).await?;
     if let Some(value) = content {
         return Ok(value);
     }
-    let public:Option<bool>=sqlx::query_scalar("SELECT c.is_preview FROM tutorial_chapters c JOIN tutorials t ON t.id=c.tutorial_id WHERE c.id=$1 AND t.id=$2 AND c.status='published' AND t.status='published'").bind(cid).bind(tid).fetch_optional(&state.pool).await?;
+    let public:Option<bool>=sqlx::query_scalar("SELECT c.is_preview FROM tutorial_chapters c JOIN tutorials t ON t.id=c.tutorial_id WHERE c.id=? AND t.id=? AND c.status='published' AND t.status='published'").bind(cid).bind(tid).fetch_optional(&state.pool).await?;
     match public {
         None | Some(true) => Err(AppError::missing()),
         Some(false) if actor.is_none() => Err(AppError::unauthorized()),
@@ -30,8 +30,8 @@ pub async fn chapter(
     }
 }
 pub async fn list(state: &AppState, q: Pagination, admin: bool) -> ApiResult<Value> {
-    let items:Vec<Value>=sqlx::query_scalar("SELECT to_jsonb(t)||jsonb_build_object('price_cents',p.price_cents,'product_slug',p.slug,'is_demo',p.is_demo) FROM tutorials t JOIN products p ON p.id=t.product_id WHERE ($2 OR (t.status='published' AND p.status='published')) AND position(lower($1) in lower(t.title))>0 ORDER BY t.created_at DESC,t.id DESC LIMIT $3 OFFSET $4").bind(&q.q).bind(admin).bind(q.size).bind(q.offset).fetch_all(&state.pool).await?;
-    let total:i64=sqlx::query_scalar("SELECT count(*) FROM tutorials t JOIN products p ON p.id=t.product_id WHERE ($2 OR (t.status='published' AND p.status='published')) AND position(lower($1) in lower(t.title))>0").bind(&q.q).bind(admin).fetch_one(&state.pool).await?;
+    let items:Vec<Value>=sqlx::query_scalar("SELECT JSON_MERGE_PATCH(JSON_OBJECT('id',BIN_TO_UUID(t.id),'product_id',BIN_TO_UUID(t.product_id),'title',t.title,'slug',t.slug,'description',t.description,'status',t.status,'created_at',t.created_at,'updated_at',t.updated_at),JSON_OBJECT('price_cents',p.price_cents,'product_slug',p.slug,'is_demo',p.is_demo)) FROM tutorials t JOIN products p ON p.id=t.product_id WHERE (? OR (t.status='published' AND p.status='published')) AND LOCATE(LOWER(?),LOWER(t.title))>0 ORDER BY t.created_at DESC,t.id DESC LIMIT ? OFFSET ?").bind(admin).bind(&q.q).bind(q.size).bind(q.offset).fetch_all(&state.pool).await?;
+    let total:i64=sqlx::query_scalar("SELECT count(*) FROM tutorials t JOIN products p ON p.id=t.product_id WHERE (? OR (t.status='published' AND p.status='published')) AND LOCATE(LOWER(?),LOWER(t.title))>0").bind(admin).bind(&q.q).fetch_one(&state.pool).await?;
     Ok(json!({"items":items,"total":total,"page":q.page,"page_size":q.size}))
 }
 pub async fn detail(
@@ -40,18 +40,19 @@ pub async fn detail(
     user: Option<Uuid>,
     admin: bool,
 ) -> ApiResult<Value> {
-    let mut value:Value=sqlx::query_scalar("SELECT to_jsonb(t)||jsonb_build_object('price_cents',p.price_cents,'product_slug',p.slug,'product_status',p.status,'is_demo',p.is_demo) FROM tutorials t JOIN products p ON p.id=t.product_id WHERE (t.slug=$1 OR t.id::text=$1) AND ($3 OR (t.status='published' AND (p.status='published' OR EXISTS(SELECT 1 FROM user_entitlements e WHERE e.product_id=p.id AND e.user_id=$2 AND e.status='active'))))").bind(key).bind(user).bind(admin).fetch_optional(&state.pool).await?.ok_or_else(AppError::missing)?;
+    let maybe_id = Uuid::parse_str(key).ok();
+    let mut value:Value=sqlx::query_scalar("SELECT JSON_MERGE_PATCH(JSON_OBJECT('id',BIN_TO_UUID(t.id),'product_id',BIN_TO_UUID(t.product_id),'title',t.title,'slug',t.slug,'description',t.description,'status',t.status,'created_at',t.created_at,'updated_at',t.updated_at),JSON_OBJECT('price_cents',p.price_cents,'product_slug',p.slug,'product_status',p.status,'is_demo',p.is_demo)) FROM tutorials t JOIN products p ON p.id=t.product_id WHERE (t.slug=? OR t.id=?) AND (? OR (t.status='published' AND (p.status='published' OR EXISTS(SELECT 1 FROM user_entitlements e WHERE e.product_id=p.id AND e.user_id=? AND e.status='active'))))").bind(key).bind(maybe_id).bind(admin).bind(user).fetch_optional(&state.pool).await?.ok_or_else(AppError::missing)?;
     let id = Uuid::parse_str(value["id"].as_str().unwrap()).map_err(|_| AppError::internal())?;
     let chapters: Vec<Value> = if admin {
-        sqlx::query_scalar("SELECT to_jsonb(c) FROM tutorial_chapters c WHERE tutorial_id=$1 ORDER BY sort_order,id").bind(id).fetch_all(&state.pool).await?
+        sqlx::query_scalar("SELECT JSON_OBJECT('id',BIN_TO_UUID(id),'tutorial_id',BIN_TO_UUID(tutorial_id),'title',title,'content_md',content_md,'is_preview',is_preview,'sort_order',sort_order,'status',status,'created_at',created_at,'updated_at',updated_at) FROM tutorial_chapters WHERE tutorial_id=? ORDER BY sort_order,id").bind(id).fetch_all(&state.pool).await?
     } else {
-        sqlx::query_scalar("SELECT jsonb_build_object('id',id,'title',title,'sort_order',sort_order,'is_preview',is_preview) FROM tutorial_chapters WHERE tutorial_id=$1 AND status='published' ORDER BY sort_order,id").bind(id).fetch_all(&state.pool).await?
+        sqlx::query_scalar("SELECT JSON_OBJECT('id',BIN_TO_UUID(id),'title',title,'sort_order',sort_order,'is_preview',is_preview) FROM tutorial_chapters WHERE tutorial_id=? AND status='published' ORDER BY sort_order,id").bind(id).fetch_all(&state.pool).await?
     };
     value["chapters"] = json!(chapters);
     Ok(value)
 }
-async fn ensure_published_valid(conn: &mut sqlx::PgConnection, product: Uuid) -> ApiResult<()> {
-    let invalid:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM products p WHERE p.id=$1 AND p.status='published' AND NOT EXISTS(SELECT 1 FROM tutorials t JOIN tutorial_chapters c ON c.tutorial_id=t.id WHERE t.product_id=p.id AND t.status='published' AND c.status='published' AND (NOT c.is_preview OR p.price_cents=0)))").bind(product).fetch_one(conn).await?;
+async fn ensure_published_valid(conn: &mut sqlx::MySqlConnection, product: Uuid) -> ApiResult<()> {
+    let invalid:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM products p WHERE p.id=? AND p.status='published' AND NOT EXISTS(SELECT 1 FROM tutorials t JOIN tutorial_chapters c ON c.tutorial_id=t.id WHERE t.product_id=p.id AND t.status='published' AND c.status='published' AND (NOT c.is_preview OR p.price_cents=0)))").bind(product).fetch_one(conn).await?;
     if invalid {
         return Err(AppError::conflict("请先下架商品，再移除其可交付章节"));
     }
@@ -66,10 +67,10 @@ pub async fn save(
     let mut tx = state.pool.begin().await?;
     let existing: Option<TutorialInput> = if let Some(id) = id {
         // Serialize editor changes on the parent before reading values to merge.
-        sqlx::query("SELECT p.id FROM products p JOIN tutorials t ON t.product_id=p.id WHERE t.id=$1 FOR UPDATE OF p")
+        sqlx::query("SELECT p.id FROM products p JOIN tutorials t ON t.product_id=p.id WHERE t.id=? FOR UPDATE")
             .bind(id).fetch_optional(&mut *tx).await?.ok_or_else(AppError::missing)?;
         let old: Value = sqlx::query_scalar(
-            "SELECT to_jsonb(t)-'id'-'created_at'-'updated_at' FROM tutorials t WHERE id=$1",
+            "SELECT JSON_OBJECT('product_id',BIN_TO_UUID(product_id),'title',title,'slug',slug,'description',description,'status',status) FROM tutorials WHERE id=?",
         )
         .bind(id)
         .fetch_optional(&mut *tx)
@@ -96,7 +97,7 @@ pub async fn save(
         return Err(AppError::conflict("已创建教程不能移动到其他商品"));
     }
     let kind: Option<String> =
-        sqlx::query_scalar("SELECT type FROM products WHERE id=$1 FOR UPDATE")
+        sqlx::query_scalar("SELECT type FROM products WHERE id=? FOR UPDATE")
             .bind(input.product_id)
             .fetch_optional(&mut *tx)
             .await?;
@@ -104,7 +105,7 @@ pub async fn save(
         return Err(AppError::invalid("教程必须关联教程类型商品"));
     }
     let tid: Uuid = if let Some(id) = id {
-        sqlx::query("UPDATE tutorials SET title=$1,slug=$2,description=$3,status=$4 WHERE id=$5")
+        sqlx::query("UPDATE tutorials SET title=?,slug=?,description=?,status=? WHERE id=?")
             .bind(&input.title)
             .bind(&input.slug)
             .bind(&input.description)
@@ -114,7 +115,9 @@ pub async fn save(
             .await?;
         id
     } else {
-        sqlx::query_scalar("INSERT INTO tutorials(product_id,title,slug,description,status) VALUES($1,$2,$3,$4,$5) RETURNING id").bind(input.product_id).bind(&input.title).bind(&input.slug).bind(&input.description).bind(&input.status).fetch_one(&mut *tx).await?
+        let tutorial_id = Uuid::new_v4();
+        sqlx::query("INSERT INTO tutorials(id,product_id,title,slug,description,status) VALUES(?,?,?,?,?,?)").bind(tutorial_id).bind(input.product_id).bind(&input.title).bind(&input.slug).bind(&input.description).bind(&input.status).execute(&mut *tx).await?;
+        tutorial_id
     };
     ensure_published_valid(&mut tx, input.product_id).await?;
     audit::record(
@@ -140,9 +143,15 @@ pub async fn save_chapter(
     value: Value,
 ) -> ApiResult<Value> {
     let mut tx = state.pool.begin().await?;
-    let product:Uuid=sqlx::query_scalar("SELECT p.id FROM products p JOIN tutorials t ON t.product_id=p.id WHERE t.id=$1 FOR UPDATE OF p").bind(tid).fetch_optional(&mut *tx).await?.ok_or_else(AppError::missing)?;
+    let product: Uuid = sqlx::query_scalar(
+        "SELECT p.id FROM products p JOIN tutorials t ON t.product_id=p.id WHERE t.id=? FOR UPDATE",
+    )
+    .bind(tid)
+    .fetch_optional(&mut *tx)
+    .await?
+    .ok_or_else(AppError::missing)?;
     let input: ChapterInput = if let Some(id) = id {
-        let old:Value=sqlx::query_scalar("SELECT to_jsonb(c)-'id'-'created_at'-'updated_at'-'tutorial_id' FROM tutorial_chapters c WHERE id=$1 AND tutorial_id=$2 FOR UPDATE").bind(id).bind(tid).fetch_optional(&mut *tx).await?.ok_or_else(AppError::missing)?;
+        let old:Value=sqlx::query_scalar("SELECT JSON_OBJECT('title',title,'content_md',content_md,'is_preview',is_preview,'sort_order',sort_order,'status',status) FROM tutorial_chapters WHERE id=? AND tutorial_id=? FOR UPDATE").bind(id).bind(tid).fetch_optional(&mut *tx).await?.ok_or_else(AppError::missing)?;
         patch(
             serde_json::from_value::<ChapterInput>(old).map_err(|_| AppError::internal())?,
             value,
@@ -158,10 +167,12 @@ pub async fn save_chapter(
         return Err(AppError::invalid("章节内容、排序或状态无效"));
     }
     let cid: Uuid = if let Some(id) = id {
-        sqlx::query("UPDATE tutorial_chapters SET title=$1,content_md=$2,is_preview=$3,sort_order=$4,status=$5 WHERE id=$6").bind(&input.title).bind(&input.content_md).bind(input.is_preview).bind(input.sort_order).bind(&input.status).bind(id).execute(&mut *tx).await?;
+        sqlx::query("UPDATE tutorial_chapters SET title=?,content_md=?,is_preview=?,sort_order=?,status=? WHERE id=?").bind(&input.title).bind(&input.content_md).bind(input.is_preview).bind(input.sort_order).bind(&input.status).bind(id).execute(&mut *tx).await?;
         id
     } else {
-        sqlx::query_scalar("INSERT INTO tutorial_chapters(tutorial_id,title,content_md,is_preview,sort_order,status) VALUES($1,$2,$3,$4,$5,$6) RETURNING id").bind(tid).bind(&input.title).bind(&input.content_md).bind(input.is_preview).bind(input.sort_order).bind(&input.status).fetch_one(&mut *tx).await?
+        let chapter_id = Uuid::new_v4();
+        sqlx::query("INSERT INTO tutorial_chapters(id,tutorial_id,title,content_md,is_preview,sort_order,status) VALUES(?,?,?,?,?,?,?)").bind(chapter_id).bind(tid).bind(&input.title).bind(&input.content_md).bind(input.is_preview).bind(input.sort_order).bind(&input.status).execute(&mut *tx).await?;
+        chapter_id
     };
     ensure_published_valid(&mut tx, product).await?;
     audit::record(
@@ -177,7 +188,7 @@ pub async fn save_chapter(
     )
     .await?;
     let result: Value =
-        sqlx::query_scalar("SELECT to_jsonb(c) FROM tutorial_chapters c WHERE id=$1")
+        sqlx::query_scalar("SELECT JSON_OBJECT('id',BIN_TO_UUID(id),'tutorial_id',BIN_TO_UUID(tutorial_id),'title',title,'content_md',content_md,'is_preview',is_preview,'sort_order',sort_order,'status',status,'created_at',created_at,'updated_at',updated_at) FROM tutorial_chapters WHERE id=?")
             .bind(cid)
             .fetch_one(&mut *tx)
             .await?;

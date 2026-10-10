@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(dirname "$0")/.."
-export DATABASE_URL="${DATABASE_URL:-postgres://devstore_test:devstore_test_only@127.0.0.1:15432/devstore_test}"
+if [[ -z "${MYSQL_TEST_DATABASE_URL:-}" ]]; then
+  echo "MYSQL_TEST_DATABASE_URL must target the isolated bz_ztore_test database" >&2
+  exit 2
+fi
+export DATABASE_URL="$MYSQL_TEST_DATABASE_URL"
 export REDIS_URL="${REDIS_URL:-redis://127.0.0.1:16379}"
 export S3_ENDPOINT="${S3_ENDPOINT:-http://127.0.0.1:19000}"
 export S3_ACCESS_KEY="${S3_ACCESS_KEY:-devstore_test}"

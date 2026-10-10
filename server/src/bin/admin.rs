@@ -31,6 +31,16 @@ enum Command {
         #[arg(long)]
         file: std::path::PathBuf,
     },
+    MfaBegin {
+        #[arg(long)]
+        admin_email: String,
+    },
+    MfaConfirm {
+        #[arg(long)]
+        admin_email: String,
+        #[arg(long)]
+        code_stdin: bool,
+    },
 }
 #[tokio::main]
 async fn main() {
@@ -81,6 +91,43 @@ async fn run(cli: Cli) -> ApiResult<()> {
                 .await?;
             println!("Payment configuration saved and audited");
         }
+        Command::MfaBegin { admin_email } => {
+            let actor = operator(&state, &admin_email).await?;
+            let (secret, recovery) =
+                devstore_server::infrastructure::mfa::begin(&state.pool, &state.config, actor.id)
+                    .await?;
+            println!("Authenticator secret (shown once): {secret}");
+            println!(
+                "otpauth://totp/DevStore:{}?secret={secret}&issuer=DevStore&algorithm=SHA1&digits=6&period=30",
+                admin_email.trim().to_lowercase()
+            );
+            println!("Recovery codes (shown once; store offline):");
+            for code in recovery {
+                println!("{code}");
+            }
+        }
+        Command::MfaConfirm {
+            admin_email,
+            code_stdin,
+        } => {
+            if !code_stdin {
+                return Err(AppError::invalid(
+                    "请使用 --code-stdin 从标准输入读取动态码",
+                ));
+            }
+            let mut code = String::new();
+            std::io::stdin().take(64).read_to_string(&mut code)?;
+            let actor = operator(&state, &admin_email).await?;
+            devstore_server::infrastructure::mfa::confirm(
+                &state.pool,
+                &state.config,
+                actor.id,
+                code.trim(),
+                time::OffsetDateTime::now_utc(),
+            )
+            .await?;
+            println!("Administrator MFA enabled. All previous sessions were revoked.");
+        }
     }
     Ok(())
 }
@@ -88,7 +135,7 @@ async fn operator(
     state: &AppState,
     email: &str,
 ) -> ApiResult<devstore_server::middleware::auth::CurrentUser> {
-    let id: uuid::Uuid = sqlx::query_scalar("SELECT id FROM users WHERE email=$1 AND status=1")
+    let id: uuid::Uuid = sqlx::query_scalar("SELECT id FROM users WHERE email=? AND status=1")
         .bind(email.trim().to_lowercase())
         .fetch_optional(&state.pool)
         .await?

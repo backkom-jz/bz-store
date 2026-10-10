@@ -8,10 +8,15 @@ use crate::{
 use serde_json::{Value, json};
 use sqlx::Row;
 use uuid::Uuid;
-pub const ORDER_VIEW: &str = "SELECT to_jsonb(o)-'payment_instructions'||jsonb_build_object('item',to_jsonb(i),'payments',COALESCE((SELECT jsonb_agg(jsonb_build_object('id',p.id,'status',p.status,'review_note',p.review_note,'created_at',p.created_at,'reviewed_at',p.reviewed_at) ORDER BY p.created_at,p.id) FROM payment_submissions p WHERE p.order_id=o.id),'[]'::jsonb)) FROM orders o JOIN order_items i ON i.order_id=o.id WHERE o.id=$1 AND ($2::uuid IS NULL OR o.user_id=$2)";
-pub async fn view(conn: &mut sqlx::PgConnection, id: Uuid, user: Option<Uuid>) -> ApiResult<Value> {
+pub const ORDER_VIEW: &str = "SELECT JSON_MERGE_PATCH(JSON_OBJECT('id',BIN_TO_UUID(o.id),'order_no',o.order_no,'user_id',BIN_TO_UUID(o.user_id),'amount_cents',o.amount_cents,'currency',o.currency,'status',o.status,'expires_at',o.expires_at,'paid_at',o.paid_at,'created_at',o.created_at,'updated_at',o.updated_at),'{}',JSON_OBJECT('item',JSON_OBJECT('id',BIN_TO_UUID(i.id),'product_id',BIN_TO_UUID(i.product_id),'product_title',i.product_title,'product_type',i.product_type,'unit_price_cents',i.unit_price_cents,'quantity',i.quantity,'subtotal_cents',i.subtotal_cents,'currency',i.currency),'payments',COALESCE((SELECT JSON_ARRAYAGG(JSON_OBJECT('id',BIN_TO_UUID(p.id),'status',p.status,'review_note',p.review_note,'created_at',p.created_at,'reviewed_at',p.reviewed_at)) FROM payment_submissions p WHERE p.order_id=o.id),JSON_ARRAY()))) FROM orders o JOIN order_items i ON i.order_id=o.id WHERE o.id=? AND (? IS NULL OR o.user_id=?)";
+pub async fn view(
+    conn: &mut sqlx::MySqlConnection,
+    id: Uuid,
+    user: Option<Uuid>,
+) -> ApiResult<Value> {
     sqlx::query_scalar(ORDER_VIEW)
         .bind(id)
+        .bind(user)
         .bind(user)
         .fetch_optional(conn)
         .await?
@@ -31,8 +36,8 @@ pub async fn create(
     }
     let fingerprint = digest(&format!("{}:{}", input.product_id, input.quantity));
     let mut tx = state.pool.begin().await?;
-    sqlx::query("INSERT INTO order_requests(user_id,idempotency_key,request_fingerprint) VALUES($1,$2,$3) ON CONFLICT DO NOTHING").bind(actor.id).bind(key).bind(&fingerprint).execute(&mut *tx).await?;
-    let existing=sqlx::query("SELECT request_fingerprint,order_id FROM order_requests WHERE user_id=$1 AND idempotency_key=$2 FOR UPDATE").bind(actor.id).bind(key).fetch_one(&mut *tx).await?;
+    sqlx::query("INSERT INTO order_requests(user_id,idempotency_key,request_fingerprint) VALUES(?,?,?) ON DUPLICATE KEY UPDATE idempotency_key=idempotency_key").bind(actor.id).bind(key).bind(&fingerprint).execute(&mut *tx).await?;
+    let existing=sqlx::query("SELECT request_fingerprint,order_id FROM order_requests WHERE user_id=? AND idempotency_key=? FOR UPDATE").bind(actor.id).bind(key).fetch_one(&mut *tx).await?;
     if existing.get::<String, _>("request_fingerprint") != fingerprint {
         return Err(AppError::conflict("此幂等键已用于其他下单内容"));
     }
@@ -45,7 +50,7 @@ pub async fn create(
         return Err(AppError::invalid("本阶段每单仅可购买一件商品"));
     }
     let product = sqlx::query(
-        "SELECT id,title,type,price_cents,currency,status FROM products WHERE id=$1 FOR UPDATE",
+        "SELECT id,title,type,price_cents,currency,status FROM products WHERE id=? FOR UPDATE",
     )
     .bind(input.product_id)
     .fetch_optional(&mut *tx)
@@ -58,17 +63,18 @@ pub async fn create(
     }
     let price: i64 = product.get("price_cents");
     let payment: Value = if price > 0 {
-        let value: Value =
-            sqlx::query_scalar("SELECT value_json FROM site_settings WHERE key='manual_payment'")
-                .fetch_optional(&mut *tx)
-                .await?
-                .ok_or_else(|| {
-                    AppError::new(
-                        axum::http::StatusCode::SERVICE_UNAVAILABLE,
-                        "PAYMENT_UNAVAILABLE",
-                        "尚未配置收款信息，暂时不能购买",
-                    )
-                })?;
+        let value: Value = sqlx::query_scalar(
+            "SELECT value_json FROM site_settings WHERE setting_key='manual_payment'",
+        )
+        .fetch_optional(&mut *tx)
+        .await?
+        .ok_or_else(|| {
+            AppError::new(
+                axum::http::StatusCode::SERVICE_UNAVAILABLE,
+                "PAYMENT_UNAVAILABLE",
+                "尚未配置收款信息，暂时不能购买",
+            )
+        })?;
         let config: PaymentConfig = serde_json::from_value(value.clone()).map_err(|_| {
             AppError::new(
                 axum::http::StatusCode::SERVICE_UNAVAILABLE,
@@ -90,12 +96,12 @@ pub async fn create(
     let id = Uuid::new_v4();
     let item = Uuid::new_v4();
     let no = format!("DS{}", id.simple().to_string().to_uppercase());
-    sqlx::query("INSERT INTO orders(id,order_no,user_id,amount_cents,status,payment_instructions) VALUES($1,$2,$3,$4,$5,$6)").bind(id).bind(no).bind(actor.id).bind(price).bind(if price==0{"completed"}else{"pending_payment"}).bind(payment).execute(&mut *tx).await?;
-    sqlx::query("INSERT INTO order_items(id,order_id,product_id,product_title,product_type,unit_price_cents,quantity,subtotal_cents) VALUES($1,$2,$3,$4,'tutorial',$5,1,$5)").bind(item).bind(id).bind(input.product_id).bind(product.get::<String,_>("title")).bind(price).execute(&mut *tx).await?;
+    sqlx::query("INSERT INTO orders(id,order_no,user_id,amount_cents,status,payment_instructions,expires_at) VALUES(?,?,?,?,?,?,DATE_ADD(UTC_TIMESTAMP(6), INTERVAL 24 HOUR))").bind(id).bind(no).bind(actor.id).bind(price).bind(if price==0{"completed"}else{"pending_payment"}).bind(payment).execute(&mut *tx).await?;
+    sqlx::query("INSERT INTO order_items(id,order_id,product_id,product_title,product_type,unit_price_cents,quantity,subtotal_cents) VALUES(?,?,?,?,'tutorial',?,1,?)").bind(item).bind(id).bind(input.product_id).bind(product.get::<String,_>("title")).bind(price).bind(price).execute(&mut *tx).await?;
     if price == 0 {
         grant_tutorial(&mut tx, actor.id, item, input.product_id).await?;
     }
-    sqlx::query("UPDATE order_requests SET order_id=$1 WHERE user_id=$2 AND idempotency_key=$3")
+    sqlx::query("UPDATE order_requests SET order_id=? WHERE user_id=? AND idempotency_key=?")
         .bind(id)
         .bind(actor.id)
         .bind(key)
@@ -108,7 +114,7 @@ pub async fn create(
 pub async fn cancel(state: &AppState, actor: &CurrentUser, id: Uuid) -> ApiResult<Value> {
     let mut tx = state.pool.begin().await?;
     let status: String =
-        sqlx::query_scalar("SELECT status FROM orders WHERE id=$1 AND user_id=$2 FOR UPDATE")
+        sqlx::query_scalar("SELECT status FROM orders WHERE id=? AND user_id=? FOR UPDATE")
             .bind(id)
             .bind(actor.id)
             .fetch_optional(&mut *tx)
@@ -118,7 +124,7 @@ pub async fn cancel(state: &AppState, actor: &CurrentUser, id: Uuid) -> ApiResul
         return Err(AppError::conflict("当前状态不能取消订单"));
     }
     if status == "pending_payment" {
-        sqlx::query("UPDATE orders SET status='cancelled' WHERE id=$1")
+        sqlx::query("UPDATE orders SET status='cancelled' WHERE id=?")
             .bind(id)
             .execute(&mut *tx)
             .await?;
@@ -128,7 +134,15 @@ pub async fn cancel(state: &AppState, actor: &CurrentUser, id: Uuid) -> ApiResul
     Ok(result)
 }
 pub async fn list(state: &AppState, user: Option<Uuid>, q: Pagination) -> ApiResult<Value> {
-    let items:Vec<Value>=sqlx::query_scalar("SELECT to_jsonb(o)-'payment_instructions'||jsonb_build_object('item',to_jsonb(i),'user_email',u.email) FROM orders o JOIN order_items i ON i.order_id=o.id JOIN users u ON u.id=o.user_id WHERE ($1::uuid IS NULL OR o.user_id=$1) AND ($2='' OR o.status=$2) ORDER BY o.created_at DESC,o.id DESC LIMIT $3 OFFSET $4").bind(user).bind(&q.status).bind(q.size).bind(q.offset).fetch_all(&state.pool).await?;
-    let total:i64=sqlx::query_scalar("SELECT count(*) FROM orders WHERE ($1::uuid IS NULL OR user_id=$1) AND ($2='' OR status=$2)").bind(user).bind(&q.status).fetch_one(&state.pool).await?;
+    let items:Vec<Value>=sqlx::query_scalar("SELECT JSON_MERGE_PATCH(JSON_OBJECT('id',BIN_TO_UUID(o.id),'order_no',o.order_no,'user_id',BIN_TO_UUID(o.user_id),'amount_cents',o.amount_cents,'currency',o.currency,'status',o.status,'expires_at',o.expires_at,'paid_at',o.paid_at,'created_at',o.created_at,'updated_at',o.updated_at),JSON_OBJECT('item',JSON_OBJECT('id',BIN_TO_UUID(i.id),'product_id',BIN_TO_UUID(i.product_id),'product_title',i.product_title,'product_type',i.product_type,'unit_price_cents',i.unit_price_cents,'quantity',i.quantity,'subtotal_cents',i.subtotal_cents,'currency',i.currency),'user_email',u.email)) FROM orders o JOIN order_items i ON i.order_id=o.id JOIN users u ON u.id=o.user_id WHERE (? IS NULL OR o.user_id=?) AND (?='' OR o.status=?) ORDER BY o.created_at DESC,o.id DESC LIMIT ? OFFSET ?").bind(user).bind(user).bind(&q.status).bind(&q.status).bind(q.size).bind(q.offset).fetch_all(&state.pool).await?;
+    let total: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM orders WHERE (? IS NULL OR user_id=?) AND (?='' OR status=?)",
+    )
+    .bind(user)
+    .bind(user)
+    .bind(&q.status)
+    .bind(&q.status)
+    .fetch_one(&state.pool)
+    .await?;
     Ok(json!({"items":items,"total":total,"page":q.page,"page_size":q.size}))
 }

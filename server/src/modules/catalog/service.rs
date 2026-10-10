@@ -11,12 +11,12 @@ use crate::{
 use serde_json::{Value, json};
 use uuid::Uuid;
 pub async fn list(state: &AppState, q: Pagination, admin: bool) -> ApiResult<Value> {
-    let items:Vec<Value>=sqlx::query_scalar("SELECT to_jsonb(p) FROM products p LEFT JOIN categories c ON c.id=p.category_id WHERE (p.status='published' OR $3) AND position(lower($1) in lower(p.title))>0 AND ($2='' OR c.slug=$2) ORDER BY p.created_at DESC,p.id DESC LIMIT $4 OFFSET $5").bind(&q.q).bind(&q.category).bind(admin).bind(q.size).bind(q.offset).fetch_all(&state.pool).await?;
-    let total:i64=sqlx::query_scalar("SELECT count(*) FROM products p LEFT JOIN categories c ON c.id=p.category_id WHERE (p.status='published' OR $3) AND position(lower($1) in lower(p.title))>0 AND ($2='' OR c.slug=$2)").bind(&q.q).bind(&q.category).bind(admin).fetch_one(&state.pool).await?;
+    let items:Vec<Value>=sqlx::query_scalar("SELECT JSON_OBJECT('id',BIN_TO_UUID(p.id),'category_id',BIN_TO_UUID(p.category_id),'type',p.type,'title',p.title,'slug',p.slug,'description',p.description,'price_cents',p.price_cents,'currency',p.currency,'status',p.status,'is_demo',p.is_demo,'created_at',p.created_at,'updated_at',p.updated_at) FROM products p LEFT JOIN categories c ON c.id=p.category_id WHERE (p.status='published' OR ?) AND LOCATE(LOWER(?),LOWER(p.title))>0 AND (?='' OR c.slug=?) ORDER BY p.created_at DESC,p.id DESC LIMIT ? OFFSET ?").bind(admin).bind(&q.q).bind(&q.category).bind(&q.category).bind(q.size).bind(q.offset).fetch_all(&state.pool).await?;
+    let total:i64=sqlx::query_scalar("SELECT count(*) FROM products p LEFT JOIN categories c ON c.id=p.category_id WHERE (p.status='published' OR ?) AND LOCATE(LOWER(?),LOWER(p.title))>0 AND (?='' OR c.slug=?)").bind(admin).bind(&q.q).bind(&q.category).bind(&q.category).fetch_one(&state.pool).await?;
     Ok(json!({"items":items,"total":total,"page":q.page,"page_size":q.size}))
 }
 pub async fn detail(state: &AppState, slug: &str) -> ApiResult<Value> {
-    sqlx::query_scalar("SELECT to_jsonb(p)||jsonb_build_object('tutorial_slug',t.slug) FROM products p LEFT JOIN tutorials t ON t.product_id=p.id WHERE p.slug=$1 AND p.status='published'").bind(slug).fetch_optional(&state.pool).await?.ok_or_else(AppError::missing)
+    sqlx::query_scalar("SELECT JSON_MERGE_PATCH(JSON_OBJECT('id',BIN_TO_UUID(p.id),'category_id',BIN_TO_UUID(p.category_id),'type',p.type,'title',p.title,'slug',p.slug,'description',p.description,'price_cents',p.price_cents,'currency',p.currency,'status',p.status,'is_demo',p.is_demo,'created_at',p.created_at,'updated_at',p.updated_at),JSON_OBJECT('tutorial_slug',t.slug)) FROM products p LEFT JOIN tutorials t ON t.product_id=p.id WHERE p.slug=? AND p.status='published'").bind(slug).fetch_optional(&state.pool).await?.ok_or_else(AppError::missing)
 }
 pub async fn save(
     state: &AppState,
@@ -26,7 +26,7 @@ pub async fn save(
 ) -> ApiResult<Value> {
     let mut tx = state.pool.begin().await?;
     let input: ProductInput = if let Some(id) = id {
-        let old:Value=sqlx::query_scalar("SELECT to_jsonb(p)-'id'-'created_at'-'updated_at'-'currency'-'is_demo' FROM products p WHERE id=$1 FOR UPDATE").bind(id).fetch_optional(&mut *tx).await?.ok_or_else(AppError::missing)?;
+        let old:Value=sqlx::query_scalar("SELECT JSON_OBJECT('title',title,'slug',slug,'type',type,'price_cents',price_cents,'description',description,'status',status,'category_id',category_id) FROM products WHERE id=? FOR UPDATE").bind(id).fetch_optional(&mut *tx).await?.ok_or_else(AppError::missing)?;
         patch(
             serde_json::from_value::<ProductInput>(old).map_err(|_| AppError::internal())?,
             input,
@@ -48,20 +48,22 @@ pub async fn save(
             return Err(AppError::invalid("本阶段仅支持发布教程"));
         }
         let existing = id.ok_or_else(|| AppError::invalid("请先保存草稿并创建教程章节"))?;
-        let ready:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM tutorials t JOIN tutorial_chapters c ON c.tutorial_id=t.id WHERE t.product_id=$1 AND t.status='published' AND c.status='published' AND (NOT c.is_preview OR $2=0))").bind(existing).bind(input.price_cents).fetch_one(&mut *tx).await?;
+        let ready:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM tutorials t JOIN tutorial_chapters c ON c.tutorial_id=t.id WHERE t.product_id=? AND t.status='published' AND c.status='published' AND (NOT c.is_preview OR ?=0))").bind(existing).bind(input.price_cents).fetch_one(&mut *tx).await?;
         if !ready {
             return Err(AppError::invalid("请先发布教程及有效的付费章节"));
         }
     }
     let product_id = if let Some(id) = id {
-        let changed:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM products p JOIN order_items oi ON oi.product_id=p.id WHERE p.id=$1 AND p.type<>$2)").bind(id).bind(&input.kind).fetch_one(&mut *tx).await?;
+        let changed:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM products p JOIN order_items oi ON oi.product_id=p.id WHERE p.id=? AND p.type<>?)").bind(id).bind(&input.kind).fetch_one(&mut *tx).await?;
         if changed {
             return Err(AppError::conflict("已售商品不能更改类型"));
         }
-        sqlx::query("UPDATE products SET title=$1,slug=$2,type=$3,price_cents=$4,description=$5,status=$6,category_id=$7 WHERE id=$8").bind(&input.title).bind(&input.slug).bind(&input.kind).bind(input.price_cents).bind(&input.description).bind(&input.status).bind(input.category_id).bind(id).execute(&mut *tx).await?;
+        sqlx::query("UPDATE products SET title=?,slug=?,type=?,price_cents=?,description=?,status=?,category_id=? WHERE id=?").bind(&input.title).bind(&input.slug).bind(&input.kind).bind(input.price_cents).bind(&input.description).bind(&input.status).bind(input.category_id).bind(id).execute(&mut *tx).await?;
         id
     } else {
-        sqlx::query_scalar("INSERT INTO products(title,slug,type,price_cents,description,status,category_id) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING id").bind(&input.title).bind(&input.slug).bind(&input.kind).bind(input.price_cents).bind(&input.description).bind(&input.status).bind(input.category_id).fetch_one(&mut *tx).await?
+        let product_id = Uuid::new_v4();
+        sqlx::query("INSERT INTO products(id,title,slug,type,price_cents,description,status,category_id) VALUES(?,?,?,?,?,?,?,?)").bind(product_id).bind(&input.title).bind(&input.slug).bind(&input.kind).bind(input.price_cents).bind(&input.description).bind(&input.status).bind(input.category_id).execute(&mut *tx).await?;
+        product_id
     };
     audit::record(
         &mut tx,
@@ -75,7 +77,7 @@ pub async fn save(
         json!({"status":input.status,"price_cents":input.price_cents}),
     )
     .await?;
-    let result: Value = sqlx::query_scalar("SELECT to_jsonb(p) FROM products p WHERE id=$1")
+    let result: Value = sqlx::query_scalar("SELECT JSON_OBJECT('id',BIN_TO_UUID(p.id),'category_id',BIN_TO_UUID(p.category_id),'type',p.type,'title',p.title,'slug',p.slug,'description',p.description,'price_cents',p.price_cents,'currency',p.currency,'status',p.status,'is_demo',p.is_demo,'created_at',p.created_at,'updated_at',p.updated_at) FROM products p WHERE id=?")
         .bind(product_id)
         .fetch_one(&mut *tx)
         .await?;

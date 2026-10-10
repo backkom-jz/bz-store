@@ -28,7 +28,8 @@ export function createApiClient(options:ApiClientOptions):ApiClient{
   const headers=new Headers(input.headers);
   if(!browser&&options.cookie)headers.set('Cookie',options.cookie);
   const mutation=!['GET','HEAD','OPTIONS'].includes(method);
-  if(mutation&&protect&&!['/auth/login','/auth/register'].includes(path))headers.set('X-CSRF-Token',await token());
+  const csrfExempt=['/auth/login','/auth/register','/auth/verify-email','/auth/verify-email/resend','/auth/password/forgot','/auth/password/reset'];
+  if(mutation&&protect&&!csrfExempt.includes(path))headers.set('X-CSRF-Token',await token());
   const isForm=typeof FormData!=='undefined'&&input.body instanceof FormData;
   if(input.body!==undefined&&!isForm)headers.set('Content-Type','application/json');
   return transport(options.baseUrl+path,{method,credentials:'include',cache:'no-store',headers,body:input.body===undefined?undefined:isForm?input.body as FormData:JSON.stringify(input.body),signal:input.signal});

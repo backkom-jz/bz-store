@@ -15,7 +15,7 @@ async fn it_auth_lifecycle() {
         .await;
     assert_eq!(me.status, 200);
     assert_eq!(me.body["data"]["email"], "alice@example.test");
-    let hash: String = sqlx::query_scalar("SELECT password_hash FROM users WHERE id=$1")
+    let hash: String = sqlx::query_scalar("SELECT password_hash FROM users WHERE id=?")
         .bind(s.id)
         .fetch_one(&app.state.pool)
         .await
@@ -31,7 +31,7 @@ async fn it_auth_lifecycle() {
             &[],
         )
         .await;
-    assert_eq!(duplicate.status, 409);
+    assert_eq!(duplicate.status, 202);
     let bad = app
         .request(
             "POST",
@@ -80,6 +80,193 @@ async fn it_auth_lifecycle() {
             .await
             .status,
         401
+    );
+}
+
+#[tokio::test]
+async fn unverified_account_cannot_login_and_verification_token_is_single_use() {
+    let app = TestApp::start().await;
+    let email = "verify-me@example.test";
+    let registration = app
+        .request(
+            "POST",
+            "/api/v1/auth/register",
+            json!({"email":email,"password":"a-long-password-123"}),
+            None,
+            &[],
+        )
+        .await;
+    assert_eq!(registration.status, 202);
+    assert_eq!(
+        app.request(
+            "POST",
+            "/api/v1/auth/login",
+            json!({"email":email,"password":"a-long-password-123"}),
+            None,
+            &[]
+        )
+        .await
+        .status,
+        401
+    );
+    let token = app.email_token(email, "email_verification").await;
+    let verified = app
+        .request(
+            "POST",
+            "/api/v1/auth/verify-email",
+            json!({"token":token}),
+            None,
+            &[],
+        )
+        .await;
+    assert_eq!(verified.status, 200, "{}", verified.body);
+    assert_eq!(
+        app.request(
+            "POST",
+            "/api/v1/auth/verify-email",
+            json!({"token":token}),
+            None,
+            &[]
+        )
+        .await
+        .status,
+        401
+    );
+    assert_eq!(
+        app.request(
+            "POST",
+            "/api/v1/auth/login",
+            json!({"email":email,"password":"a-long-password-123"}),
+            None,
+            &[]
+        )
+        .await
+        .status,
+        200
+    );
+}
+
+#[tokio::test]
+async fn registration_does_not_disclose_existing_email_and_tokens_expire() {
+    let app = TestApp::start().await;
+    let email = "private@example.test";
+    let first = app
+        .request(
+            "POST",
+            "/api/v1/auth/register",
+            json!({"email":email,"password":"a-long-password-123"}),
+            None,
+            &[],
+        )
+        .await;
+    let duplicate = app
+        .request(
+            "POST",
+            "/api/v1/auth/register",
+            json!({"email":email,"password":"a-long-password-123"}),
+            None,
+            &[],
+        )
+        .await;
+    assert_eq!(first.status, 202);
+    assert_eq!(duplicate.status, 202);
+    assert_eq!(first.body["code"], duplicate.body["code"]);
+    assert_eq!(first.body["message"], duplicate.body["message"]);
+    assert_eq!(first.body["data"], duplicate.body["data"]);
+    let token = app.email_token(email, "email_verification").await;
+    sqlx::query("UPDATE auth_tokens SET expires_at=DATE_SUB(UTC_TIMESTAMP(6),INTERVAL 1 SECOND) WHERE token_hash=?").bind(devstore_server::modules::auth::service::digest(&token)).execute(&app.state.pool).await.unwrap();
+    let expired = app
+        .request(
+            "POST",
+            "/api/v1/auth/verify-email",
+            json!({"token":token}),
+            None,
+            &[],
+        )
+        .await;
+    assert_eq!(expired.status, 401);
+}
+
+#[tokio::test]
+async fn password_forgot_is_enumeration_safe_and_reset_revokes_sessions() {
+    let app = TestApp::start().await;
+    let session = app.register_as("reset@example.test").await;
+    let known = app
+        .request(
+            "POST",
+            "/api/v1/auth/password/forgot",
+            json!({"email":"reset@example.test"}),
+            None,
+            &[],
+        )
+        .await;
+    let unknown = app
+        .request(
+            "POST",
+            "/api/v1/auth/password/forgot",
+            json!({"email":"unknown@example.test"}),
+            None,
+            &[],
+        )
+        .await;
+    assert_eq!(known.status, unknown.status);
+    assert_eq!(known.body["code"], unknown.body["code"]);
+    assert_eq!(known.body["message"], unknown.body["message"]);
+    assert_eq!(known.body["data"], unknown.body["data"]);
+    let token = app
+        .email_token("reset@example.test", "password_reset")
+        .await;
+    let reset = app
+        .request(
+            "POST",
+            "/api/v1/auth/password/reset",
+            json!({"token":token,"password":"a-different-password-456"}),
+            None,
+            &[],
+        )
+        .await;
+    assert_eq!(reset.status, 200, "{}", reset.body);
+    assert_eq!(
+        app.request("GET", "/api/v1/users/me", Value::Null, Some(&session), &[])
+            .await
+            .status,
+        401
+    );
+    assert_eq!(
+        app.request(
+            "POST",
+            "/api/v1/auth/password/reset",
+            json!({"token":token,"password":"another-password-789"}),
+            None,
+            &[]
+        )
+        .await
+        .status,
+        401
+    );
+    assert_eq!(
+        app.request(
+            "POST",
+            "/api/v1/auth/login",
+            json!({"email":"reset@example.test","password":"a-long-password-123"}),
+            None,
+            &[]
+        )
+        .await
+        .status,
+        401
+    );
+    assert_eq!(
+        app.request(
+            "POST",
+            "/api/v1/auth/login",
+            json!({"email":"reset@example.test","password":"a-different-password-456"}),
+            None,
+            &[]
+        )
+        .await
+        .status,
+        200
     );
 }
 
@@ -143,7 +330,7 @@ async fn it_refresh_race() {
             .status,
         401
     );
-    sqlx::query("UPDATE users SET status=0 WHERE id=$1")
+    sqlx::query("UPDATE users SET status=0 WHERE id=?")
         .bind(s.id)
         .execute(&app.state.pool)
         .await
@@ -200,7 +387,7 @@ async fn it_admin_bootstrap_is_explicit_and_audited() {
     .unwrap();
     assert!(admin.is_admin);
     let count: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM admin_audit_logs WHERE actor_id=$1 AND action='admin.bootstrap'",
+        "SELECT count(*) FROM admin_audit_logs WHERE actor_id=? AND action='admin.bootstrap'",
     )
     .bind(admin.id)
     .fetch_one(&app.state.pool)
@@ -226,7 +413,7 @@ async fn it_admin_bootstrap_is_explicit_and_audited() {
 async fn it_expired_access_can_refresh_without_exposing_secrets() {
     let app = TestApp::start().await;
     let mut s = app.register().await;
-    let sid: uuid::Uuid = sqlx::query_scalar("SELECT id FROM user_sessions WHERE user_id=$1")
+    let sid: uuid::Uuid = sqlx::query_scalar("SELECT id FROM user_sessions WHERE user_id=?")
         .bind(s.id)
         .fetch_one(&app.state.pool)
         .await

@@ -62,14 +62,13 @@ pub fn validate_receipt(bytes: &[u8]) -> ApiResult<ValidatedImage> {
     })
 }
 pub async fn check_order(state: &AppState, actor: &CurrentUser, id: Uuid) -> ApiResult<()> {
-    let row = sqlx::query(
-        "SELECT status,expires_at>NOW() AS valid FROM orders WHERE id=$1 AND user_id=$2",
-    )
-    .bind(id)
-    .bind(actor.id)
-    .fetch_optional(&state.pool)
-    .await?
-    .ok_or_else(AppError::missing)?;
+    let row =
+        sqlx::query("SELECT status,expires_at>NOW() AS valid FROM orders WHERE id=? AND user_id=?")
+            .bind(id)
+            .bind(actor.id)
+            .fetch_optional(&state.pool)
+            .await?
+            .ok_or_else(AppError::missing)?;
     if row.get::<String, _>("status") != "pending_payment" || !row.get::<bool, _>("valid") {
         return Err(AppError::conflict("订单已过期或不再等待付款"));
     }
@@ -93,14 +92,14 @@ pub async fn submit_proof(
         .map_err(|_| AppError::internal())??;
     let file = Uuid::new_v4();
     let key = format!("quarantine/{}/{}", actor.id, file);
-    sqlx::query("INSERT INTO file_objects(id,owner_id,purpose,storage_key,content_type,size_bytes,sha256,status) VALUES($1,$2,'payment_proof',$3,$4,$5,$6,'quarantined')").bind(file).bind(actor.id).bind(&key).bind(validated.content_type).bind(bytes.len() as i64).bind(format!("{:x}",Sha256::digest(&bytes))).execute(&state.pool).await?;
+    sqlx::query("INSERT INTO file_objects(id,owner_id,purpose,storage_key,content_type,size_bytes,sha256,status) VALUES(?,?,'payment_proof',?,?,?,?,'quarantined')").bind(file).bind(actor.id).bind(&key).bind(validated.content_type).bind(bytes.len() as i64).bind(format!("{:x}",Sha256::digest(&bytes))).execute(&state.pool).await?;
     state
         .storage
         .put(&Path::from(key), bytes.clone().into())
         .await?;
     if let Err(error) = state.scanner.scan(&bytes).await {
         sqlx::query(
-            "UPDATE file_objects SET status='rejected' WHERE id=$1 AND status='quarantined'",
+            "UPDATE file_objects SET status='rejected' WHERE id=? AND status='quarantined'",
         )
         .bind(file)
         .execute(&state.pool)
@@ -110,7 +109,7 @@ pub async fn submit_proof(
     drop(permit);
     let mut tx = state.pool.begin().await?;
     let row = sqlx::query(
-        "SELECT status,expires_at>NOW() AS valid FROM orders WHERE id=$1 AND user_id=$2 FOR UPDATE",
+        "SELECT status,expires_at>NOW() AS valid FROM orders WHERE id=? AND user_id=? FOR UPDATE",
     )
     .bind(order)
     .bind(actor.id)
@@ -120,12 +119,26 @@ pub async fn submit_proof(
     if row.get::<String, _>("status") != "pending_payment" || !row.get::<bool, _>("valid") {
         return Err(AppError::conflict("订单已过期或不再等待付款"));
     }
-    let n=sqlx::query("UPDATE file_objects SET status='clean' WHERE id=$1 AND owner_id=$2 AND status='quarantined'").bind(file).bind(actor.id).execute(&mut *tx).await?.rows_affected();
+    let n = sqlx::query(
+        "UPDATE file_objects SET status='clean' WHERE id=? AND owner_id=? AND status='quarantined'",
+    )
+    .bind(file)
+    .bind(actor.id)
+    .execute(&mut *tx)
+    .await?
+    .rows_affected();
     if n != 1 {
         return Err(AppError::conflict("文件状态已改变，请重新上传"));
     }
-    let proof:Value=sqlx::query_scalar("INSERT INTO payment_submissions(order_id,file_id) VALUES($1,$2) RETURNING jsonb_build_object('id',id,'order_id',order_id,'status',status,'created_at',created_at)").bind(order).bind(file).fetch_one(&mut *tx).await?;
-    sqlx::query("UPDATE orders SET status='payment_review' WHERE id=$1")
+    let proof_id = Uuid::new_v4();
+    sqlx::query("INSERT INTO payment_submissions(id,order_id,file_id) VALUES(?,?,?)")
+        .bind(proof_id)
+        .bind(order)
+        .bind(file)
+        .execute(&mut *tx)
+        .await?;
+    let proof:Value=sqlx::query_scalar("SELECT JSON_OBJECT('id',BIN_TO_UUID(id),'order_id',BIN_TO_UUID(order_id),'status',status,'created_at',created_at) FROM payment_submissions WHERE id=?").bind(proof_id).fetch_one(&mut *tx).await?;
+    sqlx::query("UPDATE orders SET status='payment_review' WHERE id=?")
         .bind(order)
         .execute(&mut *tx)
         .await?;
@@ -142,7 +155,7 @@ pub async fn proof_bytes(
     proof: Uuid,
     order: Option<Uuid>,
 ) -> ApiResult<PrivateFile> {
-    let row=sqlx::query("SELECT f.storage_key,f.content_type FROM payment_submissions p JOIN orders o ON o.id=p.order_id JOIN file_objects f ON f.id=p.file_id WHERE p.id=$1 AND f.status='clean' AND (($2::uuid IS NULL AND $3) OR (o.id=$2 AND o.user_id=$4))").bind(proof).bind(order).bind(actor.is_admin).bind(actor.id).fetch_optional(&state.pool).await?.ok_or_else(AppError::missing)?;
+    let row=sqlx::query("SELECT f.storage_key,f.content_type FROM payment_submissions p JOIN orders o ON o.id=p.order_id JOIN file_objects f ON f.id=p.file_id WHERE p.id=? AND f.status='clean' AND ((? IS NULL AND ?) OR (o.id=? AND o.user_id=?))").bind(proof).bind(order).bind(actor.is_admin).bind(order).bind(actor.id).fetch_optional(&state.pool).await?.ok_or_else(AppError::missing)?;
     let bytes = state
         .storage
         .get(&Path::from(row.get::<String, _>("storage_key")))

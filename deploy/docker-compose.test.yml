@@ -11,19 +11,6 @@ services:
     volumes:
       - ./nginx/default.conf.template:/etc/nginx/templates/default.conf.template:ro
       - ../apps/admin/dist:/srv/admin:ro
-  postgres:
-    image: postgres:17-alpine@sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24
-    environment:
-      POSTGRES_USER: devstore_test
-      POSTGRES_PASSWORD: devstore_test_only
-      POSTGRES_DB: devstore_test
-    ports: ["127.0.0.1:15432:5432"]
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U devstore_test"]
-      interval: 2s
-      timeout: 3s
-      retries: 30
-    volumes: [test-postgres:/var/lib/postgresql/data]
   redis:
     image: redis:7.2@sha256:6372db89351b00ba0ddca437ff49ce2ed4beed8a961a27d8259060c9603c240d
     ports: ["127.0.0.1:16379:6379"]
@@ -45,7 +32,10 @@ services:
     image: clamav/clamav@sha256:974ff8d90d274ce85a0b9bb417497a6fd5201ef30f2fc83cb073b916f97727d5
     ports: ["127.0.0.1:13310:3310"]
     volumes: [test-clamav:/var/lib/clamav]
+  mailpit:
+    image: axllent/mailpit:v1.27
+    ports: ["127.0.0.1:11025:1025", "127.0.0.1:18025:8025"]
+    profiles: ["e2e"]
 volumes:
-  test-postgres:
   test-objects:
   test-clamav:

@@ -87,6 +87,6 @@ async fn instructions(
     u: CurrentUser,
     ApiPath(id): ApiPath<Uuid>,
 ) -> ApiResult<impl IntoResponse> {
-    let row:Value=sqlx::query_scalar("SELECT payment_instructions||jsonb_build_object('order_no',order_no,'amount_cents',amount_cents,'currency',currency,'expires_at',expires_at,'status',status) FROM orders WHERE id=$1 AND user_id=$2").bind(id).bind(u.id).fetch_optional(&s.pool).await?.ok_or_else(AppError::missing)?;
+    let row:Value=sqlx::query_scalar("SELECT JSON_MERGE_PATCH(payment_instructions,JSON_OBJECT('order_no',order_no,'amount_cents',amount_cents,'currency',currency,'expires_at',expires_at,'status',status)) FROM orders WHERE id=? AND user_id=?").bind(id).bind(u.id).fetch_optional(&s.pool).await?.ok_or_else(AppError::missing)?;
     Ok(ok(row))
 }

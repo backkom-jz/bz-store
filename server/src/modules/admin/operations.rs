@@ -12,20 +12,26 @@ pub async fn seed_demo(state: &AppState, actor: &CurrentUser) -> ApiResult<Value
     }
     let mut tx = state.pool.begin().await?;
     // Serialize explicit operator seed calls without modifying user-edited demo content.
-    sqlx::query("SELECT pg_advisory_xact_lock(764356789)")
+    sqlx::query("SELECT id FROM roles WHERE code='admin' FOR UPDATE")
         .execute(&mut *tx)
         .await?;
     if let Some(value) = sqlx::query_scalar::<_, Value>(
-        "SELECT to_jsonb(p) FROM products p WHERE slug='rust-axum-starter'",
+        "SELECT JSON_OBJECT('id',BIN_TO_UUID(id),'category_id',BIN_TO_UUID(category_id),'type',type,'title',title,'slug',slug,'description',description,'price_cents',price_cents,'currency',currency,'status',status,'is_demo',is_demo,'created_at',created_at,'updated_at',updated_at) FROM products WHERE slug='rust-axum-starter'",
     )
     .fetch_optional(&mut *tx)
     .await?
     {
         return Ok(value);
     }
-    let category:Uuid=sqlx::query_scalar("INSERT INTO categories(name,slug) VALUES('Rust 开发','rust') ON CONFLICT(slug) DO UPDATE SET slug=EXCLUDED.slug RETURNING id").fetch_one(&mut *tx).await?;
-    let product:Uuid=sqlx::query_scalar("INSERT INTO products(title,slug,type,price_cents,description,is_demo,category_id) VALUES('Rust + Axum：从接口到交易闭环','rust-axum-starter','tutorial',9900,'示例教程：围绕实际项目，学习类型安全的 API、数据库事务和部署。此内容用于本地演示。',true,$1) RETURNING id").bind(category).fetch_one(&mut *tx).await?;
-    let tutorial:Uuid=sqlx::query_scalar("INSERT INTO tutorials(product_id,title,slug,description,status) VALUES($1,'Rust + Axum：从接口到交易闭环','rust-axum-starter','示例教程，包含免费预览和购买后的项目实践。','published') RETURNING id").bind(product).fetch_one(&mut *tx).await?;
+    let category = Uuid::new_v4();
+    sqlx::query("INSERT INTO categories(id,name,slug) VALUES(?,'Rust 开发','rust') ON DUPLICATE KEY UPDATE slug=VALUES(slug)").bind(category).execute(&mut *tx).await?;
+    let category: Uuid = sqlx::query_scalar("SELECT id FROM categories WHERE slug='rust'")
+        .fetch_one(&mut *tx)
+        .await?;
+    let product = Uuid::new_v4();
+    sqlx::query("INSERT INTO products(id,title,slug,type,price_cents,description,is_demo,category_id) VALUES(?,'Rust + Axum：从接口到交易闭环','rust-axum-starter','tutorial',9900,'示例教程：围绕实际项目，学习类型安全的 API、数据库事务和部署。此内容用于本地演示。',true,?)").bind(product).bind(category).execute(&mut *tx).await?;
+    let tutorial = Uuid::new_v4();
+    sqlx::query("INSERT INTO tutorials(id,product_id,title,slug,description,status) VALUES(?,?,'Rust + Axum：从接口到交易闭环','rust-axum-starter','示例教程，包含免费预览和购买后的项目实践。','published')").bind(tutorial).bind(product).execute(&mut *tx).await?;
     for (sort, title, content, preview) in [
         (
             0,
@@ -40,9 +46,9 @@ pub async fn seed_demo(state: &AppState, actor: &CurrentUser) -> ApiResult<Value
             false,
         ),
     ] {
-        sqlx::query("INSERT INTO tutorial_chapters(tutorial_id,title,content_md,is_preview,sort_order,status) VALUES($1,$2,$3,$4,$5,'published')").bind(tutorial).bind(title).bind(content).bind(preview).bind(sort).execute(&mut *tx).await?;
+        sqlx::query("INSERT INTO tutorial_chapters(id,tutorial_id,title,content_md,is_preview,sort_order,status) VALUES(?,?,?,?,?,?,'published')").bind(Uuid::new_v4()).bind(tutorial).bind(title).bind(content).bind(preview).bind(sort).execute(&mut *tx).await?;
     }
-    sqlx::query("UPDATE products SET status='published' WHERE id=$1")
+    sqlx::query("UPDATE products SET status='published' WHERE id=?")
         .bind(product)
         .execute(&mut *tx)
         .await?;
@@ -54,7 +60,7 @@ pub async fn seed_demo(state: &AppState, actor: &CurrentUser) -> ApiResult<Value
         json!({"source":"local_cli"}),
     )
     .await?;
-    let value = sqlx::query_scalar("SELECT to_jsonb(p) FROM products p WHERE id=$1")
+    let value = sqlx::query_scalar("SELECT JSON_OBJECT('id',BIN_TO_UUID(p.id),'category_id',BIN_TO_UUID(p.category_id),'type',p.type,'title',p.title,'slug',p.slug,'description',p.description,'price_cents',p.price_cents,'currency',p.currency,'status',p.status,'is_demo',p.is_demo,'created_at',p.created_at,'updated_at',p.updated_at) FROM products p WHERE id=?")
         .bind(product)
         .fetch_one(&mut *tx)
         .await?;
@@ -71,7 +77,7 @@ pub async fn payment_config(
     }
     value.validate()?;
     let mut tx = state.pool.begin().await?;
-    sqlx::query("INSERT INTO site_settings(key,value_json) VALUES('manual_payment',$1) ON CONFLICT(key) DO UPDATE SET value_json=EXCLUDED.value_json").bind(serde_json::to_value(&value).map_err(|_|AppError::internal())?).execute(&mut *tx).await?;
+    sqlx::query("INSERT INTO site_settings(setting_key,value_json) VALUES('manual_payment',?) ON DUPLICATE KEY UPDATE value_json=VALUES(value_json)").bind(serde_json::to_value(&value).map_err(|_|AppError::internal())?).execute(&mut *tx).await?;
     audit::record(
         &mut tx,
         actor.id,

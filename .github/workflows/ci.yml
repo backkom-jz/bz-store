@@ -35,6 +35,8 @@ jobs:
           cache: npm
       - run: npm ci
       - run: cargo test -p devstore-server --test mysql_database_target
+      - run: scripts/test-deploy-config.sh
+      - run: python3 scripts/backup/test_mysql_defaults.py
       - run: bash scripts/check.sh
       - run: npx playwright install --with-deps chromium
       - run: bash scripts/test-e2e.sh

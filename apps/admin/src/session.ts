@@ -29,8 +29,8 @@ export async function loadSession() {
   }
 }
 
-export async function login(email: string, password: string) {
-  const user = await api.request<PublicUser>('/auth/login', { method: 'POST', body: { email, password } });
+export async function login(email: string, password: string, totpCode: string) {
+  const user = await api.request<PublicUser>('/auth/login', { method: 'POST', body: { email, password, totp_code: totpCode } });
   session.user = user;
   session.error = '';
   if (!user.is_admin) throw new Error('这个账号没有管理员权限');
