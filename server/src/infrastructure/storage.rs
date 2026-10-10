@@ -1,14 +1,35 @@
 use crate::{common::ApiResult, config::Config};
 use object_store::aws::{AmazonS3, AmazonS3Builder};
 use object_store::signer::Signer;
+pub fn endpoint(config: &Config) -> ApiResult<String> {
+    if !config.s3_virtual_hosted {
+        return Ok(config.s3_endpoint.clone());
+    }
+    let mut url = reqwest::Url::parse(&config.s3_endpoint)
+        .map_err(|_| crate::common::AppError::invalid("S3_ENDPOINT 无效"))?;
+    let host = url
+        .host_str()
+        .ok_or_else(|| crate::common::AppError::invalid("S3_ENDPOINT 无效"))?
+        .to_owned();
+    if host.split('.').next() != Some(config.s3_bucket.as_str()) {
+        let bucket_host = format!("{}.{}", config.s3_bucket, host);
+        url.set_host(Some(&bucket_host))
+            .map_err(|_| crate::common::AppError::invalid("S3_ENDPOINT 无效"))?;
+    }
+    url.set_path("");
+    url.set_query(None);
+    url.set_fragment(None);
+    Ok(url.to_string().trim_end_matches('/').to_string())
+}
 pub fn build(config: &Config) -> ApiResult<AmazonS3> {
     Ok(AmazonS3Builder::new()
         .with_bucket_name(&config.s3_bucket)
-        .with_region("us-east-1")
-        .with_endpoint(&config.s3_endpoint)
+        .with_region(&config.s3_region)
+        .with_endpoint(endpoint(config)?)
         .with_access_key_id(&config.s3_access_key)
         .with_secret_access_key(&config.s3_secret_key)
         .with_allow_http(!config.secure())
+        .with_virtual_hosted_style_request(config.s3_virtual_hosted)
         .build()?)
 }
 pub async fn create_bucket(config: &Config) -> ApiResult<()> {

@@ -13,6 +13,8 @@ pub struct Config {
     pub s3_access_key: String,
     pub s3_secret_key: String,
     pub s3_bucket: String,
+    pub s3_region: String,
+    pub s3_virtual_hosted: bool,
     pub trusted_proxies: Vec<std::net::IpAddr>,
     pub email: Option<EmailConfig>,
     pub mfa_encryption_key: Option<[u8; 32]>,
@@ -102,6 +104,12 @@ impl Config {
             s3_access_key: required("S3_ACCESS_KEY")?,
             s3_secret_key: required("S3_SECRET_KEY")?,
             s3_bucket: required("S3_BUCKET")?,
+            s3_region: std::env::var("S3_REGION")
+                .ok()
+                .filter(|value| !value.trim().is_empty())
+                .unwrap_or_else(|| "us-east-1".into()),
+            s3_virtual_hosted: std::env::var("S3_VIRTUAL_HOSTED")
+                .is_ok_and(|value| value == "true"),
             trusted_proxies: std::env::var("TRUSTED_PROXIES")
                 .unwrap_or_default()
                 .split(',')

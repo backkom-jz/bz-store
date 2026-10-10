@@ -12,6 +12,8 @@ fn config() -> Config {
         s3_access_key: "key".into(),
         s3_secret_key: "secret".into(),
         s3_bucket: "bucket".into(),
+        s3_region: "us-east-1".into(),
+        s3_virtual_hosted: false,
         trusted_proxies: vec![],
         email: None,
         mfa_encryption_key: Some([9_u8; 32]),
@@ -58,4 +60,21 @@ fn app_database_target_rejects_erp_and_test_databases_in_production() {
     assert!(c.validate().is_err());
     c.database_url = "mysql://user:secret@rds.example.test:3306/bz_ztore_test".into();
     assert!(c.validate().is_err());
+}
+
+#[test]
+fn virtual_hosted_endpoint_uses_the_bucket_subdomain() {
+    let mut config = config();
+    config.s3_endpoint = "https://oss-cn-shanghai.aliyuncs.com".into();
+    config.s3_bucket = "bz-store".into();
+    config.s3_virtual_hosted = false;
+    assert_eq!(
+        devstore_server::infrastructure::storage::endpoint(&config).unwrap(),
+        "https://oss-cn-shanghai.aliyuncs.com"
+    );
+    config.s3_virtual_hosted = true;
+    assert_eq!(
+        devstore_server::infrastructure::storage::endpoint(&config).unwrap(),
+        "https://bz-store.oss-cn-shanghai.aliyuncs.com"
+    );
 }

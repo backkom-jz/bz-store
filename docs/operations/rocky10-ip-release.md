@@ -99,7 +99,9 @@ mysql --ssl-mode=VERIFY_IDENTITY --ssl-ca=/etc/devstore/rds-ca.pem \
 
 期望输出 `bz_ztore_test`。连接失败时不要启动 API。
 
-对象存储使用一对只属于测试桶的密钥。API 把签名区域写死为 `us-east-1`，并使用路径风格访问 `S3_ENDPOINT`。上线前用第 6 步的 `admin init-storage` 确认该端点接受这个区域；若厂商要求真实区域，先改代码并在测试桶验证创建、上传和下载，再发布。
+对象存储使用一对只属于测试桶的密钥。默认按路径风格访问 `S3_ENDPOINT`，签名区域默认 `us-east-1`，这是本地 MinIO 的用法。阿里云华东 2 拒绝路径风格，报 `SecondLevelDomainForbidden`。这只桶要额外写 `S3_VIRTUAL_HOSTED=true` 和 `S3_REGION=oss-cn-shanghai`。端点仍是 `https://oss-cn-shanghai.aliyuncs.com`，不要把桶名写进端点，程序会自己访问 `https://bz-store.oss-cn-shanghai.aliyuncs.com`。`S3_BUCKET` 写 `bz-store`。这台机器不在阿里云 VPC 内，不要使用 `oss-cn-shanghai-internal.aliyuncs.com`。桶可以事先建好并保持私有；`init-storage` 遇到已存在的桶会当作成功。
+
+改这两个变量之前，服务器上的二进制必须是包含该开关的版本。旧二进制没有 `S3_VIRTUAL_HOSTED`，只改环境文件无效。`curl: (6) Could not resolve host` 是 DNS 失败，不要把地址写进 `/etc/hosts`。先用 `dig @119.29.29.29` 和 `dig @223.5.5.5` 查询 `oss-cn-shanghai.aliyuncs.com`。直连公共 DNS 能解析、系统解析不能时，把 NetworkManager 或 `systemd-resolved` 的 DNS 改成这两台。两边都超时则是出站 UDP 53 被安全组或防火墙拦住。
 
 密码里的 `@`、`:`、`/`、`?`、`#` 必须做 URL 编码后再放进 `DATABASE_URL`。`@` 写成 `%40`。
 
@@ -284,14 +286,35 @@ readlink -f /var/www/html/bz-store/current
 
 两个文件都由 root 所有，组为 `devstore`，模式 `0640`。不要提交到 Git。
 
-生成两枚不同的会话密钥。每枚字符串长度至少 32：
+生成两枚不同的会话密钥，直接写入 `api.env`，不在终端显示内容。模板里的「替换成第一枚随机值」只有 27 字节，原样留下会被拒绝。每枚至少 32 字节，且两枚不能相同：
 
 ```bash
-openssl rand -base64 32
-openssl rand -base64 32
+python3 << 'PY'
+import pathlib, secrets
+path = pathlib.Path("/etc/devstore/api.env")
+jwt = secrets.token_urlsafe(32)
+csrf = secrets.token_urlsafe(32)
+lines, seen = [], set()
+for line in path.read_text().splitlines():
+    key = line.split("=", 1)[0].removeprefix("export ").strip()
+    if key == "JWT_SECRET":
+        lines.append(f"JWT_SECRET={jwt}")
+        seen.add(key)
+    elif key == "CSRF_SECRET":
+        lines.append(f"CSRF_SECRET={csrf}")
+        seen.add(key)
+    else:
+        lines.append(line)
+if "JWT_SECRET" not in seen:
+    lines.append(f"JWT_SECRET={jwt}")
+if "CSRF_SECRET" not in seen:
+    lines.append(f"CSRF_SECRET={csrf}")
+path.write_text("\n".join(lines) + "\n")
+print("JWT_SECRET", len(jwt), "CSRF_SECRET", len(csrf), "different", jwt != csrf)
+PY
 ```
 
-把输出分别填入 `JWT_SECRET` 和 `CSRF_SECRET`，然后从 shell 历史中清除这两行。不要复用它们作为邮件或 MFA 密钥。
+输出应显示两个长度都不小于 32，并且 `different True`。不要把这两枚值复用为邮件或 MFA 密钥。
 
 `/etc/devstore/api.env`：
 
@@ -303,14 +326,16 @@ DATABASE_URL=mysql://TEST_USER:URL编码后的密码@RDS_HOST:3306/bz_ztore_test
 REDIS_URL=redis://127.0.0.1:6379
 JWT_SECRET=替换成第一枚随机值
 CSRF_SECRET=替换成另一枚随机值
-S3_ENDPOINT=https://测试对象存储端点
+S3_ENDPOINT=https://oss-cn-shanghai.aliyuncs.com
 S3_ACCESS_KEY=测试访问密钥
 S3_SECRET_KEY=测试秘密密钥
-S3_BUCKET=devstore-test
+S3_BUCKET=bz-store
+S3_REGION=oss-cn-shanghai
+S3_VIRTUAL_HOSTED=true
 TRUSTED_PROXIES=127.0.0.1
 ```
 
-`SITE_URL` 不能带路径、查询或尾部斜杠。`APP_ENV=test` 时库名必须正好是 `bz_ztore_test`，否则进程拒绝启动。不要写入 `MYSQL_TEST_DATABASE_URL`，API 不读这个变量。
+`SITE_URL` 不能带路径、查询或尾部斜杠。`APP_ENV=test` 时，`DATABASE_URL` 解析出的路径必须正好是 `/bz_ztore_test`，不能是 `/bz_ztore`、`/bz_store_test` 或带尾部斜杠的 `/bz_ztore_test/`。协议必须是 `mysql`。密码里的 `@`、`/`、`?`、`#`、`%` 要分别写成 `%40`、`%2F`、`%3F`、`%23`、`%25`，否则主机会被拆开，进程报「DATABASE_URL 必须指向 DevStore 对应的 MySQL 数据库」。不要写入 `MYSQL_TEST_DATABASE_URL`，API 不读这个变量。
 
 SMTP 要么全部不写，要么同时写齐 `SMTP_HOST`、`EMAIL_FROM`、`EMAIL_OUTBOX_ENCRYPTION_KEY`，并按服务商要求成对填写 `SMTP_USERNAME` 和 `SMTP_PASSWORD`。只写其中一部分会让 API 无法启动。本阶段保持全部不写。
 
@@ -342,7 +367,7 @@ awk -F= '/^[[:space:]]*(export[[:space:]]+)?[A-Za-z_][A-Za-z0-9_]*=/ {
 }' /etc/devstore/api.env
 ```
 
-至少要有 `APP_ENV`、`APP_PORT`、`SITE_URL`、`DATABASE_URL`、`REDIS_URL`、`JWT_SECRET`、`CSRF_SECRET`、`S3_ENDPOINT`、`S3_ACCESS_KEY`、`S3_SECRET_KEY`、`S3_BUCKET`。每行写成 `KEY=value`，不要在 `=` 两侧加空格。`DATABASE_URL` 里的 `&` 必须留在同一行，不要用 shell 的 `source` 去加载这个文件。
+至少要有 `APP_ENV`、`APP_PORT`、`SITE_URL`、`DATABASE_URL`、`REDIS_URL`、`JWT_SECRET`、`CSRF_SECRET`、`S3_ENDPOINT`、`S3_ACCESS_KEY`、`S3_SECRET_KEY`、`S3_BUCKET`。阿里云还要有 `S3_REGION=oss-cn-shanghai` 和 `S3_VIRTUAL_HOSTED=true`。每行写成 `KEY=value`，不要在 `=` 两侧加空格。`DATABASE_URL` 里的 `&` 必须留在同一行，不要用 shell 的 `source` 去加载这个文件。
 
 `systemd-run --property=EnvironmentFile=` 不会把这个文件交给一次性命令。管理命令改走下面的启动程序，由它读取 `api.env`：
 
