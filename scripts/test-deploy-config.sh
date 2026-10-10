@@ -5,7 +5,7 @@ public="$root/deploy/nginx/public.conf.template"
 local="$root/deploy/nginx/default.conf.template"
 compose="$root/deploy/docker-compose.public.yml"
 grep -Fq 'server_name store.bengzi.cn;' "$public"
-grep -Fq 'return 308 https://$host$request_uri;' "$public"
+grep -Fq 'return 308 https://store.bengzi.cn$request_uri;' "$public"
 grep -Fq 'listen 443 ssl;' "$public"
 grep -Fq 'ssl_certificate /etc/nginx/tls/fullchain.pem;' "$public"
 grep -Fq 'proxy_set_header X-Forwarded-Proto https;' "$public"
@@ -19,4 +19,8 @@ grep -Fq 'SITE_URL=http://bz-store.local' "$root/.env.example"
 grep -Fq '127.0.0.1:80:80' "$root/deploy/docker-compose.yml"
 grep -Fq 'access_log off;' "$public"
 grep -Fq 'access_log off;' "$local"
+if grep -Rqi 'clamav' "$root/deploy/docker-compose.yml" "$root/deploy/docker-compose.test.yml" "$root/server/src" "$root/.env.example"; then
+  echo 'DevStore runtime must not require ClamAV' >&2
+  exit 1
+fi
 echo 'deployment config checks passed'

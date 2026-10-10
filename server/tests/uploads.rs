@@ -25,12 +25,9 @@ fn receipt_dimensions_and_truncation_are_bounded() {
     );
 }
 #[tokio::test]
-async fn it_real_scanner_and_orphan_cleanup() {
-    use devstore_server::{infrastructure::scanner::Scanner, jobs::cleanup_uploads::cleanup_batch};
-    let mut app = TestApp::start().await;
-    let scanner = app.state.scanner.clone();
-    let eicar = br"X5O!P%@AP[4\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*";
-    assert_eq!(scanner.scan(eicar).await.unwrap_err().status, 422);
+async fn it_uploads_remain_private_and_orphan_cleanup_stays_enabled() {
+    use devstore_server::jobs::cleanup_uploads::cleanup_batch;
+    let app = TestApp::start().await;
     let admin = app.admin().await;
     let buyer = app.register().await;
     let course = app.course(&admin, 9900).await;
@@ -40,18 +37,23 @@ async fn it_real_scanner_and_orphan_cleanup() {
         .upload(&buyer, good, &receipt(image::ImageFormat::Png))
         .await;
     assert_eq!(result.status, 201);
-    let orphan = app.order(&buyer, course.product).await;
-    app.state.scanner = Scanner {
-        addr: "127.0.0.1:1".into(),
-    };
-    app.router = devstore_server::build_router(app.state.clone());
-    assert_eq!(
-        app.upload(&buyer, orphan, &receipt(image::ImageFormat::Png))
-            .await
-            .status,
-        503
-    );
-    sqlx::query("UPDATE file_objects SET created_at=DATE_SUB(UTC_TIMESTAMP(6),INTERVAL 2 DAY)")
+    let status: String = sqlx::query_scalar(
+        "SELECT f.status FROM file_objects f JOIN payment_submissions p ON p.file_id=f.id WHERE p.order_id=?",
+    )
+    .bind(good)
+    .fetch_one(&app.state.pool)
+    .await
+    .unwrap();
+    assert_eq!(status, "quarantined");
+    let ready = app
+        .request("GET", "/api/v1/health/ready", Value::Null, None, &[])
+        .await;
+    assert_eq!(ready.status, 200, "{}", ready.body);
+    let orphan = Uuid::new_v4();
+    sqlx::query("INSERT INTO file_objects(id,owner_id,purpose,storage_key,content_type,size_bytes,sha256,status,created_at) VALUES(?,?,'payment_proof',?,'image/png',1,'test','quarantined',DATE_SUB(UTC_TIMESTAMP(6),INTERVAL 2 DAY))")
+        .bind(orphan)
+        .bind(buyer.id)
+        .bind(format!("quarantine/{}/orphan", buyer.id))
         .execute(&app.state.pool)
         .await
         .unwrap();
@@ -192,24 +194,4 @@ async fn it_private_uploads_and_concurrent_submission() {
             .status,
         201
     );
-}
-#[tokio::test]
-async fn it_scanner_failure_does_not_create_proof() {
-    let mut app = TestApp::start().await;
-    let admin = app.admin().await;
-    let buyer = app.register().await;
-    let course = app.course(&admin, 9900).await;
-    app.payment_config().await;
-    let order = app.order(&buyer, course.product).await;
-    app.state.scanner.addr = "127.0.0.1:1".into();
-    app.router = devstore_server::build_router(app.state.clone());
-    let r = app
-        .upload(&buyer, order, &receipt(image::ImageFormat::Png))
-        .await;
-    assert_eq!(r.status, 503, "{}", r.body);
-    let n: i64 = sqlx::query_scalar("SELECT count(*) FROM payment_submissions")
-        .fetch_one(&app.state.pool)
-        .await
-        .unwrap();
-    assert_eq!(n, 0);
 }

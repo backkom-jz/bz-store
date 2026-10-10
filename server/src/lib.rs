@@ -54,7 +54,6 @@ async fn ready(
             .query_async(&mut state.redis.clone())
             .await?;
         state.storage.list(None).try_next().await?;
-        state.scanner.ping().await?;
         Ok::<_, common::AppError>(())
     })
     .await

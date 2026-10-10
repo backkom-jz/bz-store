@@ -9,7 +9,7 @@ fi
 export NUXT_TELEMETRY_DISABLED=1
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
-docker compose -f deploy/docker-compose.test.yml up -d --wait --wait-timeout 180 redis storage clamav
+docker compose -f deploy/docker-compose.test.yml up -d --wait --wait-timeout 180 redis storage
 bash scripts/test-server.sh all
 npm run typecheck
 npm run test:unit

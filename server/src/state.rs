@@ -1,8 +1,4 @@
-use crate::{
-    common::ApiResult,
-    config::Config,
-    infrastructure::{scanner::Scanner, storage},
-};
+use crate::{common::ApiResult, config::Config, infrastructure::storage};
 use sqlx::{
     MySqlPool,
     mysql::{MySqlConnectOptions, MySqlPoolOptions, MySqlSslMode},
@@ -16,7 +12,6 @@ pub struct AppState {
     pub config: Arc<Config>,
     pub redis: redis::aio::ConnectionManager,
     pub storage: Arc<object_store::aws::AmazonS3>,
-    pub scanner: Scanner,
     pub email_sender: Option<std::sync::Arc<dyn crate::infrastructure::email::EmailSender>>,
     pub password_slots: Arc<tokio::sync::Semaphore>,
     pub upload_slots: Arc<tokio::sync::Semaphore>,
@@ -48,9 +43,6 @@ impl AppState {
             .get_connection_manager()
             .await?;
         let storage = Arc::new(storage::build(&config)?);
-        let scanner = Scanner {
-            addr: config.clamav_addr.clone(),
-        };
         let email_sender = config
             .email
             .as_ref()
@@ -69,7 +61,6 @@ impl AppState {
             config: Arc::new(config),
             redis,
             storage,
-            scanner,
             email_sender,
             password_slots: Arc::new(tokio::sync::Semaphore::new(4)),
             upload_slots: Arc::new(tokio::sync::Semaphore::new(4)),

@@ -13,7 +13,6 @@ pub struct Config {
     pub s3_access_key: String,
     pub s3_secret_key: String,
     pub s3_bucket: String,
-    pub clamav_addr: String,
     pub trusted_proxies: Vec<std::net::IpAddr>,
     pub email: Option<EmailConfig>,
     pub mfa_encryption_key: Option<[u8; 32]>,
@@ -103,7 +102,6 @@ impl Config {
             s3_access_key: required("S3_ACCESS_KEY")?,
             s3_secret_key: required("S3_SECRET_KEY")?,
             s3_bucket: required("S3_BUCKET")?,
-            clamav_addr: required("CLAMAV_ADDR")?,
             trusted_proxies: std::env::var("TRUSTED_PROXIES")
                 .unwrap_or_default()
                 .split(',')

@@ -35,8 +35,6 @@ services:
         condition: service_healthy
       storage:
         condition: service_started
-      clamav:
-        condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/api/v1/health/ready"]
       interval: 10s
@@ -74,13 +72,9 @@ services:
       RUSTFS_VOLUMES: /data
       RUSTFS_CONSOLE_ENABLE: "false"
     volumes: [objects:/data]
-  clamav:
-    image: clamav/clamav@sha256:974ff8d90d274ce85a0b9bb417497a6fd5201ef30f2fc83cb073b916f97727d5
-    volumes: [clamav:/var/lib/clamav]
 volumes:
   redis:
   objects:
-  clamav:
 networks:
   default:
     driver: bridge

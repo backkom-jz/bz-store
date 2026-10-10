@@ -32,7 +32,7 @@ pub async fn document() -> axum::Json<Value> {
     doc["servers"] = json!([{"url":"/api/v1"}]);
     doc["components"]["securitySchemes"] = json!({"session":{"type":"apiKey","in":"cookie","name":"ds_access"},"refresh":{"type":"apiKey","in":"cookie","name":"ds_refresh"}});
     doc["components"]["schemas"]["Envelope"] = json!({"type":"object","required":["code","message","data","request_id"],"properties":{"code":{"type":"string"},"message":{"type":"string"},"data":{},"request_id":{"type":"string","format":"uuid"}}});
-    doc["components"]["schemas"]["Receipt"] = json!({"type":"object","required":["file"],"properties":{"file":{"type":"string","format":"binary","description":"One PNG/JPEG, max 5 MiB, each dimension <=8000, <=20 million pixels. Full multipart request <=6 MiB. ClamAV must return clean."}}});
+    doc["components"]["schemas"]["Receipt"] = json!({"type":"object","required":["file"],"properties":{"file":{"type":"string","format":"binary","description":"One fully decodable PNG/JPEG, max 5 MiB, each dimension <=8000, <=20 million pixels. Full multipart request <=6 MiB. Stored privately; not malware-scanned."}}});
     let routes = [
         ("get", "/health/live", "Liveness", "", false),
         ("get", "/health/ready", "Dependency readiness", "", false),
@@ -121,7 +121,7 @@ pub async fn document() -> axum::Json<Value> {
         (
             "post",
             "/orders/{id}/payment-proof",
-            "Submit scanned receipt",
+            "Submit payment receipt",
             "Receipt",
             true,
         ),

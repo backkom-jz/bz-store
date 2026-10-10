@@ -12,7 +12,6 @@ fn config() -> Config {
         s3_access_key: "key".into(),
         s3_secret_key: "secret".into(),
         s3_bucket: "bucket".into(),
-        clamav_addr: "scanner:3310".into(),
         trusted_proxies: vec![],
         email: None,
         mfa_encryption_key: Some([9_u8; 32]),

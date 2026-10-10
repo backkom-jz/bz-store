@@ -97,15 +97,6 @@ pub async fn submit_proof(
         .storage
         .put(&Path::from(key), bytes.clone().into())
         .await?;
-    if let Err(error) = state.scanner.scan(&bytes).await {
-        sqlx::query(
-            "UPDATE file_objects SET status='rejected' WHERE id=? AND status='quarantined'",
-        )
-        .bind(file)
-        .execute(&state.pool)
-        .await?;
-        return Err(error);
-    }
     drop(permit);
     let mut tx = state.pool.begin().await?;
     let row = sqlx::query(
@@ -118,17 +109,6 @@ pub async fn submit_proof(
     .ok_or_else(AppError::missing)?;
     if row.get::<String, _>("status") != "pending_payment" || !row.get::<bool, _>("valid") {
         return Err(AppError::conflict("订单已过期或不再等待付款"));
-    }
-    let n = sqlx::query(
-        "UPDATE file_objects SET status='clean' WHERE id=? AND owner_id=? AND status='quarantined'",
-    )
-    .bind(file)
-    .bind(actor.id)
-    .execute(&mut *tx)
-    .await?
-    .rows_affected();
-    if n != 1 {
-        return Err(AppError::conflict("文件状态已改变，请重新上传"));
     }
     let proof_id = Uuid::new_v4();
     sqlx::query("INSERT INTO payment_submissions(id,order_id,file_id) VALUES(?,?,?)")
@@ -155,7 +135,7 @@ pub async fn proof_bytes(
     proof: Uuid,
     order: Option<Uuid>,
 ) -> ApiResult<PrivateFile> {
-    let row=sqlx::query("SELECT f.storage_key,f.content_type FROM payment_submissions p JOIN orders o ON o.id=p.order_id JOIN file_objects f ON f.id=p.file_id WHERE p.id=? AND f.status='clean' AND ((? IS NULL AND ?) OR (o.id=? AND o.user_id=?))").bind(proof).bind(order).bind(actor.is_admin).bind(order).bind(actor.id).fetch_optional(&state.pool).await?.ok_or_else(AppError::missing)?;
+    let row=sqlx::query("SELECT f.storage_key,f.content_type FROM payment_submissions p JOIN orders o ON o.id=p.order_id JOIN file_objects f ON f.id=p.file_id WHERE p.id=? AND f.status IN ('quarantined','clean') AND ((? IS NULL AND ?) OR (o.id=? AND o.user_id=?))").bind(proof).bind(order).bind(actor.is_admin).bind(order).bind(actor.id).fetch_optional(&state.pool).await?.ok_or_else(AppError::missing)?;
     let bytes = state
         .storage
         .get(&Path::from(row.get::<String, _>("storage_key")))

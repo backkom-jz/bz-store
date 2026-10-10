@@ -14,7 +14,7 @@ if ! grep -q 'bz-store.local' /etc/hosts; then
   exit 1
 fi
 docker compose --env-file .env -f deploy/docker-compose.yml up -d --build
-echo "等待 http://bz-store.local/api/v1/health/ready 。首次启动 ClamAV 可能需要几分钟。"
+echo "等待 http://bz-store.local/api/v1/health/ready 。"
 echo "初始化私有存储桶。"
 storage_ready=0
 for _ in $(seq 1 30); do
