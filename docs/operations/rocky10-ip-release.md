@@ -29,7 +29,7 @@ API 监听 `0.0.0.0:18080`，Nuxt 和 Redis 只监听 `127.0.0.1`。18080 能起
 以 root 执行。
 
 ```bash
-dnf -y install nginx redis policycoreutils-python-utils tar xz
+dnf -y install nginx redis policycoreutils-python-utils tar xz mariadb
 timedatectl set-timezone Asia/Shanghai
 ```
 
@@ -92,12 +92,14 @@ install -d -o root -g devstore -m 0750 /etc/devstore
 
 下载 RDS 厂商的 CA，保存为 `/etc/devstore/rds-ca.pem`，权限 `0644`。先用客户端确认 TLS 和库名，再启动 API：
 
+Rocky 自带的是 MariaDB 客户端，不认识 MySQL 的 `ssl-mode`。API 的 `DATABASE_URL` 仍保留 `ssl-mode=VERIFY_IDENTITY`。客户端用下面的参数：
+
 ```bash
-mysql --ssl-mode=VERIFY_IDENTITY --ssl-ca=/etc/devstore/rds-ca.pem \
+mysql --ssl-ca=/etc/devstore/rds-ca.pem --ssl-verify-server-cert \
   -h RDS_HOST -P 3306 -u TEST_USER -p bz_ztore_test -e 'SELECT DATABASE();'
 ```
 
-期望输出 `bz_ztore_test`。连接失败时不要启动 API。
+期望输出 `bz_ztore_test`。连接失败时不要启动 API。若客户端报 `SSL is required, but the server does not support it`，说明云数据库实例还没打开 SSL；在控制台开通后再用上面的命令。开通前可以用 `mysql --skip-ssl` 做一次性检查，不要把未加密连接留到对外访问。
 
 对象存储使用一对只属于测试桶的密钥。默认按路径风格访问 `S3_ENDPOINT`，签名区域默认 `us-east-1`，这是本地 MinIO 的用法。阿里云华东 2 拒绝路径风格，报 `SecondLevelDomainForbidden`。这只桶要额外写 `S3_VIRTUAL_HOSTED=true` 和 `S3_REGION=oss-cn-shanghai`。端点仍是 `https://oss-cn-shanghai.aliyuncs.com`，不要把桶名写进端点，程序会自己访问 `https://bz-store.oss-cn-shanghai.aliyuncs.com`。`S3_BUCKET` 写 `bz-store`。这台机器不在阿里云 VPC 内，不要使用 `oss-cn-shanghai-internal.aliyuncs.com`。桶可以事先建好并保持私有；`init-storage` 遇到已存在的桶会当作成功。
 
@@ -688,7 +690,7 @@ tail -n 100 /var/log/nginx/error.log
 
 | 现象 | 先看 |
 | --- | --- |
-| API 反复重启，日志是 `database migration failed` | 先 `systemctl stop devstore-api`。MySQL 的建表语句不能回滚；`_sqlx_migrations.success=0` 表示这次迁移只执行了一部分，继续重启不会重跑。空的 `bz_ztore_test` 可以删掉已建的表后，用 `mysql` 客户端重放 `server/migrations/0001_core.sql` 看真正的 SQL 错误 |
+| API 反复重启，日志是 `database migration failed` | 先 `systemctl stop devstore-api`。MySQL 8.0 不允许列上的 `CHECK` 引用其他列，`order_items` 的金额约束必须写成表级 `CHECK`。失败后 `_sqlx_migrations.success=0`，已建的表不会回滚。空的 `bz_ztore_test` 要删掉全部表，再用包含该修正的二进制重新启动 |
 | `ready` 为 503 | MySQL、Redis，或测试桶尚未 `init-storage` |
 | Nginx 502 | `devstore-web` 或 `devstore-api` 没在 3000 / 18080 监听；SELinux 是否拦截反代 |
 | `/admin/products/new` 为 404 | `current/admin-dist/index.html` 是否存在，`nginx` 用户能否读取，命名 location 是否仍在配置里 |

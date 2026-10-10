@@ -59,9 +59,10 @@ CREATE TABLE order_items (
  id BINARY(16) PRIMARY KEY,order_id BINARY(16) NOT NULL UNIQUE,product_id BINARY(16) NOT NULL,
  product_title VARCHAR(200) NOT NULL,product_type VARCHAR(20) NOT NULL CHECK(product_type IN ('digital','tutorial','service')),
  unit_price_cents BIGINT NOT NULL CHECK(unit_price_cents BETWEEN 0 AND 100000000),quantity INTEGER NOT NULL CHECK(quantity=1),
- subtotal_cents BIGINT NOT NULL CHECK(subtotal_cents=unit_price_cents*quantity),currency CHAR(3) NOT NULL DEFAULT 'CNY' CHECK(currency='CNY'),
+ subtotal_cents BIGINT NOT NULL,currency CHAR(3) NOT NULL DEFAULT 'CNY' CHECK(currency='CNY'),
  created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
- FOREIGN KEY(order_id) REFERENCES orders(id),FOREIGN KEY(product_id) REFERENCES products(id)
+ FOREIGN KEY(order_id) REFERENCES orders(id),FOREIGN KEY(product_id) REFERENCES products(id),
+ CHECK(subtotal_cents=unit_price_cents*quantity)
 ) ENGINE=InnoDB;
 CREATE TABLE order_requests (
  user_id BINARY(16) NOT NULL,idempotency_key VARCHAR(128) NOT NULL,request_fingerprint CHAR(64) NOT NULL,
