@@ -72,7 +72,11 @@ impl AppState {
             .await
             .map_err(|error| {
                 tracing::error!(error = %error, "database migration failed");
-                crate::common::AppError::internal()
+                crate::common::AppError::new(
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    "INTERNAL_ERROR",
+                    format!("数据库迁移失败: {error}"),
+                )
             })?;
         Ok(())
     }

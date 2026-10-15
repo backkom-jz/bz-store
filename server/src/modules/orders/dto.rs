@@ -6,6 +6,13 @@ pub struct CreateOrderInput {
     pub product_id: Uuid,
     pub quantity: i32,
 }
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RefundInput {
+    pub amount_cents: i64,
+    pub reference_no: String,
+    pub note: String,
+}
 #[derive(Deserialize, Serialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct PaymentConfig {

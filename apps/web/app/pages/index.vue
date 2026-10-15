@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type {Page,ProductSummary} from '@devstore/shared-types';import {ArrowRight,ArrowUpRight,BookOpen,Code2,Terminal,ShieldCheck,Layers,Check,GitBranch,Box} from '@lucide/vue';
-const api=useApi();const {data,error,status,refresh}=await useAsyncData('home-products',()=>api.request<Page<ProductSummary>>('/products?page_size=3'));
+const api=useApi();const {data,error,status,refresh}=await useAsyncData('home-products',()=>api.request<Page<ProductSummary>>('/products?kind=tutorial&page_size=3'));
 useSeoMeta({title:'DevStore · 技术，从学习到落地',description:'专业技术教程与项目实践，围绕 Rust、Vue、AI 和 DevOps，让技术更简单，让创意变现实。'});
 </script>
 <template><div class="container"><section class="hero"><div class="hero-grid"><div><div class="hero-label"><span class="status-dot"/> 为创造者而构建 · BUILT FOR BUILDERS</div><h1 aria-label="让技术更简单，让创意变现实。">让技术更简单，<br><span class="accent">让创意变现实。</span></h1><p class="hero-copy">不止于学会代码，更是掌握解决问题的能力。<br>从系统学习到项目落地，在这里，构建你的下一步。</p><div class="hero-buttons"><NuxtLink to="/tutorials" class="btn">探索教程 <ArrowRight :size="16"/></NuxtLink><NuxtLink to="/products" class="btn secondary"><Layers :size="15"/> 浏览商城</NuxtLink></div><div class="hero-note"><span><Check :size="13"/> 项目驱动</span><span><Check :size="13"/> 代码实践</span><span><Check :size="13"/> 持续学习</span></div></div>

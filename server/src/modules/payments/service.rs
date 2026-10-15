@@ -67,17 +67,28 @@ pub async fn approve(
         .bind(id)
         .fetch_one(&mut *tx)
         .await?;
-    if item.get::<String, _>("product_type") != "tutorial" {
-        return Err(AppError::conflict("当前版本只支持教程交付"));
-    }
-    grant_tutorial(
-        &mut tx,
-        order.get("user_id"),
-        item.get("id"),
-        item.get("product_id"),
-    )
-    .await?;
-    sqlx::query("UPDATE orders SET status='completed',paid_at=NOW() WHERE id=?")
+    let buyer: Uuid = order.get("user_id");
+    let item_id: Uuid = item.get("id");
+    let product_id: Uuid = item.get("product_id");
+    let next_status = match item.get::<String, _>("product_type").as_str() {
+        "tutorial" | "digital" => {
+            if item.get::<String, _>("product_type") == "digital" {
+                let ready: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM product_files WHERE product_id=?)").bind(product_id).fetch_one(&mut *tx).await?;
+                if !ready {
+                    return Err(AppError::conflict("数字商品还没有可交付文件"));
+                }
+            }
+            grant_tutorial(&mut tx, buyer, item_id, product_id).await?;
+            "completed"
+        }
+        "service" => {
+            crate::modules::tickets::open_ticket(&mut tx, id, item_id, buyer).await?;
+            "fulfilling"
+        }
+        _ => return Err(AppError::conflict("当前商品不支持交付")),
+    };
+    sqlx::query("UPDATE orders SET status=?,paid_at=NOW() WHERE id=?")
+        .bind(next_status)
         .bind(id)
         .execute(&mut *tx)
         .await?;

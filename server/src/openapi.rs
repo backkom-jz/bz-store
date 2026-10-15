@@ -96,6 +96,13 @@ pub async fn document() -> axum::Json<Value> {
             true,
         ),
         (
+            "get",
+            "/me/purchases/{product_id}",
+            "Whether the user already owns or has an open order",
+            "",
+            true,
+        ),
+        (
             "post",
             "/orders",
             "Idempotent checkout",

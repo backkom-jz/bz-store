@@ -1,7 +1,10 @@
 pub mod admin;
 pub mod auth;
+pub mod blog;
 pub mod catalog;
+pub mod downloads;
 pub mod entitlements;
 pub mod orders;
 pub mod payments;
+pub mod tickets;
 pub mod tutorials;

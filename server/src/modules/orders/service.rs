@@ -1,7 +1,7 @@
 use super::dto::*;
 use crate::{
     common::{ApiResult, AppError, pagination::Pagination},
-    middleware::auth::CurrentUser,
+    middleware::auth::{AdminUser, CurrentUser},
     modules::{auth::service::digest, entitlements::service::grant_tutorial},
     state::AppState,
 };
@@ -57,7 +57,7 @@ pub async fn create(
     .await?
     .ok_or_else(AppError::missing)?;
     if product.get::<String, _>("status") != "published"
-        || product.get::<String, _>("type") != "tutorial"
+        || !matches!(product.get::<String, _>("type").as_str(), "tutorial" | "digital" | "service")
     {
         return Err(AppError::conflict("商品尚未上架或不支持交付"));
     }
@@ -97,9 +97,25 @@ pub async fn create(
     let item = Uuid::new_v4();
     let no = format!("DS{}", id.simple().to_string().to_uppercase());
     sqlx::query("INSERT INTO orders(id,order_no,user_id,amount_cents,status,payment_instructions,expires_at) VALUES(?,?,?,?,?,?,DATE_ADD(UTC_TIMESTAMP(6), INTERVAL 24 HOUR))").bind(id).bind(no).bind(actor.id).bind(price).bind(if price==0{"completed"}else{"pending_payment"}).bind(payment).execute(&mut *tx).await?;
-    sqlx::query("INSERT INTO order_items(id,order_id,product_id,product_title,product_type,unit_price_cents,quantity,subtotal_cents) VALUES(?,?,?,?,'tutorial',?,1,?)").bind(item).bind(id).bind(input.product_id).bind(product.get::<String,_>("title")).bind(price).bind(price).execute(&mut *tx).await?;
+    let kind: String = product.get("type");
+    if !matches!(kind.as_str(), "tutorial" | "digital" | "service") {
+        return Err(AppError::conflict("商品尚未上架或不支持交付"));
+    }
+    if kind == "digital" {
+        let ready: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM product_files WHERE product_id=?)").bind(input.product_id).fetch_one(&mut *tx).await?;
+        if !ready {
+            return Err(AppError::conflict("商品尚未上架或不支持交付"));
+        }
+    }
+    sqlx::query("INSERT INTO order_items(id,order_id,product_id,product_title,product_type,unit_price_cents,quantity,subtotal_cents) VALUES(?,?,?,?,?,?,1,?)").bind(item).bind(id).bind(input.product_id).bind(product.get::<String,_>("title")).bind(&kind).bind(price).bind(price).execute(&mut *tx).await?;
     if price == 0 {
-        grant_tutorial(&mut tx, actor.id, item, input.product_id).await?;
+        match kind.as_str() {
+            "service" => {
+                crate::modules::tickets::open_ticket(&mut tx, id, item, actor.id).await?;
+                sqlx::query("UPDATE orders SET status='fulfilling' WHERE id=?").bind(id).execute(&mut *tx).await?;
+            }
+            _ => grant_tutorial(&mut tx, actor.id, item, input.product_id).await?,
+        }
     }
     sqlx::query("UPDATE order_requests SET order_id=? WHERE user_id=? AND idempotency_key=?")
         .bind(id)
@@ -145,4 +161,41 @@ pub async fn list(state: &AppState, user: Option<Uuid>, q: Pagination) -> ApiRes
     .fetch_one(&state.pool)
     .await?;
     Ok(json!({"items":items,"total":total,"page":q.page,"page_size":q.size}))
+}
+pub async fn refund(state: &AppState, actor: &AdminUser, id: Uuid, input: RefundInput) -> ApiResult<Value> {
+    use crate::common::pagination::text;
+    text(&input.reference_no, 128)?;
+    text(&input.note, 2000)?;
+    if !(0..=100_000_000).contains(&input.amount_cents) {
+        return Err(AppError::invalid("退款金额超出范围"));
+    }
+    let mut tx = state.pool.begin().await?;
+    let order = sqlx::query("SELECT status,amount_cents FROM orders WHERE id=? FOR UPDATE").bind(id).fetch_optional(&mut *tx).await?;
+    let Some(order) = order else {
+        return Err(AppError::missing());
+    };
+    let status: String = order.get("status");
+    let amount_cents: i64 = order.get("amount_cents");
+    if !matches!(status.as_str(), "completed" | "fulfilling") {
+        return Err(AppError::conflict("只有已交付或履约中的订单可以登记退款"));
+    }
+    if input.amount_cents != amount_cents {
+        return Err(AppError::invalid("当前只支持整单退款，金额必须与订单一致"));
+    }
+    let duplicated: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM refunds WHERE reference_no=?)").bind(&input.reference_no).fetch_one(&mut *tx).await?;
+    if duplicated {
+        return Err(AppError::conflict("退款流水号已登记"));
+    }
+    sqlx::query("INSERT INTO refunds(id,order_id,amount_cents,reference_no,note,actor_id) VALUES(?,?,?,?,?,?)")
+        .bind(Uuid::new_v4()).bind(id).bind(input.amount_cents).bind(&input.reference_no).bind(input.note.trim()).bind(actor.0.id)
+        .execute(&mut *tx).await?;
+    sqlx::query("UPDATE user_entitlements SET status='revoked',revoked_at=UTC_TIMESTAMP(6) WHERE order_item_id=(SELECT id FROM order_items WHERE order_id=?) AND status='active'")
+        .bind(id).execute(&mut *tx).await?;
+    sqlx::query("UPDATE service_tickets SET status='closed',closed_at=UTC_TIMESTAMP(6) WHERE order_id=? AND status='open'")
+        .bind(id).execute(&mut *tx).await?;
+    sqlx::query("UPDATE orders SET status='refunded' WHERE id=?").bind(id).execute(&mut *tx).await?;
+    crate::modules::admin::audit::record(&mut tx, actor.0.id, "order.refund", id, json!({"amount_cents": input.amount_cents, "reference_no": input.reference_no})).await?;
+    let result = view(&mut tx, id, None).await?;
+    tx.commit().await?;
+    Ok(result)
 }

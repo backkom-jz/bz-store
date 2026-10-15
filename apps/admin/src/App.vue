@@ -20,7 +20,9 @@ function navActive(prefix: string) {
       <nav aria-label="后台导航">
         <RouterLink to="/payments" :class="{ 'is-active': navActive('/payments') }">付款审核</RouterLink>
         <RouterLink to="/orders" :class="{ 'is-active': navActive('/orders') }">订单</RouterLink>
+        <RouterLink to="/tickets" :class="{ 'is-active': navActive('/tickets') }">工单</RouterLink>
         <RouterLink to="/products" :class="{ 'is-active': navActive('/products') }">商品</RouterLink>
+        <RouterLink to="/blog" :class="{ 'is-active': navActive('/blog') }">博客</RouterLink>
         <RouterLink to="/tutorials" :class="{ 'is-active': navActive('/tutorials') }">教程</RouterLink>
         <RouterLink to="/audit" :class="{ 'is-active': navActive('/audit') }">审计</RouterLink>
       </nav>

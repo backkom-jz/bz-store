@@ -9,6 +9,7 @@ pub struct ListQuery {
     pub page: Option<i64>,
     pub page_size: Option<i64>,
     pub status: Option<String>,
+    pub kind: Option<String>,
 }
 pub struct Pagination {
     pub q: String,
@@ -17,6 +18,7 @@ pub struct Pagination {
     pub size: i64,
     pub offset: i64,
     pub status: String,
+    pub kind: String,
 }
 impl ListQuery {
     pub fn validate(self) -> ApiResult<Pagination> {
@@ -34,6 +36,7 @@ impl ListQuery {
             size,
             offset: (page - 1) * size,
             status: self.status.unwrap_or_default(),
+            kind: self.kind.unwrap_or_default(),
         })
     }
 }

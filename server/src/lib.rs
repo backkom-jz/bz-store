@@ -32,6 +32,9 @@ pub fn build_router(state: state::AppState) -> axum::Router {
                 .merge(modules::orders::handler::router())
                 .merge(modules::payments::handler::router())
                 .merge(modules::entitlements::handler::router())
+                .merge(modules::downloads::router())
+                .merge(modules::tickets::router())
+                .merge(modules::blog::router())
                 .layer(axum::middleware::from_fn_with_state(
                     state.clone(),
                     middleware::security::origin,

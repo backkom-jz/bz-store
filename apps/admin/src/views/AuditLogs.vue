@@ -19,6 +19,8 @@ const actionLabel: Record<string, string> = {
   'chapter.create': '添加章节',
   'chapter.update': '修改章节',
   'category.create': '创建分类',
+  'order.refund': '登记退款',
+  'product.file': '上传数字商品文件',
 };
 
 function summary(detail: Record<string, unknown>) {

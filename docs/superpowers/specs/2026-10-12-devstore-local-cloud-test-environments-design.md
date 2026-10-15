@@ -2,7 +2,7 @@
 
 日期：2026-10-12
 
-状态：待用户审阅
+状态：用户已确认
 
 ## 目标
 
@@ -13,6 +13,7 @@
 ## 已确认的决定与约束
 
 - 本地只保留 `devstore` 开发栈；`devstore-test` 不在本地运行。
+- DevStore 本地 gateway 只绑定 `127.0.0.1:8088`，避免与本机 LNMP Nginx 的 80/443 冲突。
 - 不使用 PostgreSQL，也不使用 ClamAV。
 - 本地 `scripts/check.sh` 只执行快速代码检查：格式/静态检查、Rust 单元测试、前端单元测试、类型检查和构建。
 - 数据库集成测试和 E2E 测试在云端专用测试环境执行。
@@ -30,7 +31,7 @@
 
 ## 方案
 
-保留一套本地开发 Compose 项目，提供本地应用服务及其 Redis、RustFS 依赖。Compose 服务和项目名保持简单、稳定；启动、停止、日志命令统一指向 `deploy/docker-compose.yml`。本地开发使用开发库和开发对象存储配置，不启动测试服务。
+保留一套本地开发 Compose 项目，提供本地应用服务及其 Redis、RustFS 依赖。Compose 服务和项目名保持简单、稳定；启动、停止、日志命令统一指向 `deploy/docker-compose.yml`。本机已有 LNMP Nginx 占用 80/443，因此 DevStore 本地 gateway 只绑定 `127.0.0.1:8088`；公网覆盖层仍按既有配置监听 80/443。本地开发使用开发库和开发对象存储配置，不启动测试服务。
 
 把本地检查与云端测试拆为不同入口：
 
@@ -62,7 +63,7 @@
 
 ## 验收标准
 
-1. 本地 `docker compose ls` 只显示 DevStore 的一套运行项目；`devstore-test` 不再有运行容器。
+1. Docker 中 DevStore 只保留 `devstore` 一个运行项目；其他独立项目（例如既有 LNMP）不受影响，`devstore-test` 不再有运行容器。
 2. 本地 DevStore Compose 不启动 PostgreSQL 或 ClamAV；当前 API、前端、Redis、RustFS 健康，站点可访问。
 3. 清理前后的 PostgreSQL、ClamAV、Redis、RustFS 数据卷仍存在；未执行任何卷删除命令。
 4. 本地 `scripts/check.sh` 不调用 Docker、不连接数据库/Redis/OSS，成功执行格式检查、Clippy、单元测试、类型检查和构建。

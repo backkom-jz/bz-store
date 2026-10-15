@@ -76,6 +76,37 @@ impl IntoResponse for AppError {
 }
 impl From<sqlx::Error> for AppError {
     fn from(error: sqlx::Error) -> Self {
+        match &error {
+            sqlx::Error::Io(source) => {
+                return Self::new(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "SERVICE_UNAVAILABLE",
+                    format!("无法连接数据库: {source}"),
+                );
+            }
+            sqlx::Error::Tls(source) => {
+                return Self::new(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "SERVICE_UNAVAILABLE",
+                    format!("无法连接数据库: {source}"),
+                );
+            }
+            sqlx::Error::PoolTimedOut => {
+                return Self::new(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "SERVICE_UNAVAILABLE",
+                    "无法连接数据库: 等待连接超时",
+                );
+            }
+            sqlx::Error::PoolClosed => {
+                return Self::new(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "SERVICE_UNAVAILABLE",
+                    "无法连接数据库: 连接池已关闭",
+                );
+            }
+            _ => {}
+        }
         let database_error = error.as_database_error();
         let code = database_error.and_then(|e| e.code());
         let mysql_number = database_error

@@ -5,7 +5,7 @@ use time::OffsetDateTime;
 use uuid::Uuid;
 pub async fn cleanup_batch(state: &AppState, cutoff: OffsetDateTime) -> ApiResult<u64> {
     let mut tx = state.pool.begin().await?;
-    let files=sqlx::query("SELECT f.id,f.storage_key FROM file_objects f WHERE f.created_at<? AND NOT EXISTS(SELECT 1 FROM payment_submissions p WHERE p.file_id=f.id) AND f.status IN ('quarantined','rejected') ORDER BY f.created_at,f.id LIMIT 100 FOR UPDATE SKIP LOCKED").bind(cutoff).fetch_all(&mut *tx).await?;
+    let files=sqlx::query("SELECT f.id,f.storage_key FROM file_objects f WHERE f.purpose='payment_proof' AND f.created_at<? AND NOT EXISTS(SELECT 1 FROM payment_submissions p WHERE p.file_id=f.id) AND f.status IN ('quarantined','rejected') ORDER BY f.created_at,f.id LIMIT 100 FOR UPDATE SKIP LOCKED").bind(cutoff).fetch_all(&mut *tx).await?;
     for row in &files {
         let id: Uuid = row.get("id");
         sqlx::query("UPDATE file_objects SET status='deleting' WHERE id=?")

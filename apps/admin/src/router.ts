@@ -21,6 +21,11 @@ const router = createRouter({
     { path: '/payments', name: 'payments', component: () => import('./views/Payments.vue') },
     { path: '/orders', name: 'orders', component: () => import('./views/Orders.vue') },
     { path: '/orders/:id', name: 'order', component: () => import('./views/OrderDetail.vue') },
+    { path: '/tickets', name: 'tickets', component: () => import('./views/Tickets.vue') },
+    { path: '/tickets/:id', name: 'ticket', component: () => import('./views/TicketDetail.vue') },
+    { path: '/blog', name: 'blog', component: () => import('./views/Blog.vue') },
+    { path: '/blog/new', name: 'blog-new', component: () => import('./views/BlogEditor.vue') },
+    { path: '/blog/:id', name: 'blog-post', component: () => import('./views/BlogEditor.vue') },
     { path: '/audit', name: 'audit', component: () => import('./views/AuditLogs.vue') },
   ],
 });

@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import type {Page,ProductSummary,Category} from '@devstore/shared-types';import {Search,ArrowRight} from '@lucide/vue';
-const props=defineProps<{tutorials?:boolean}>();const api=useApi();const route=useRoute();const q=ref(String(route.query.q||''));const category=ref(String(route.query.category||''));const page=ref(1);const search=ref(q.value);
-const query=computed(()=>new URLSearchParams({q:search.value,category:category.value,page:String(page.value),page_size:'9'}).toString());
+const props=defineProps<{tutorials?:boolean}>();const api=useApi();const route=useRoute();const q=ref(String(route.query.q||''));const category=ref(String(route.query.category||''));const page=ref(Math.max(1,Number(route.query.page)||1));const search=ref(q.value);
+const query=computed(()=>new URLSearchParams({q:search.value,category:category.value,page:String(page.value),page_size:'9',...(props.tutorials?{kind:'tutorial'}:{})}).toString());
 const {data,error,status,refresh}=await useAsyncData(()=> 'catalog:'+props.tutorials+':'+query.value,()=>api.request<Page<ProductSummary>>('/products?'+query.value));
 const {data:categories}=await useAsyncData('categories',()=>api.request<Category[]>('/categories'));
 function find(){search.value=q.value.trim();page.value=1;}
-watch(category,()=>page.value=1);
+watch(category,()=>{page.value=1;});
+watch([search,category,page],()=>{const query:Record<string,string>={};if(search.value)query.q=search.value;if(category.value)query.category=category.value;if(page.value>1)query.page=String(page.value);void navigateTo({path:route.path,query},{replace:true});});
 </script>
 <template><div class="container"><div class="page-head"><div class="eyebrow">{{ tutorials?'LEARN BY BUILDING':'THE DEVELOPER COLLECTION' }}</div><h1>{{ tutorials?'教程中心':'商品商城' }}</h1><p class="muted">从基础原理到真实项目，找到适合你的下一步。</p></div>
 <form class="catalog-toolbar" role="search" @submit.prevent="find"><div class="search-field"><Search :size="17"/><label for="search" class="sr-only">搜索教程</label><input id="search" v-model="q" type="search" placeholder="搜索 Rust、Vue、工程实践…" maxlength="100"></div><label for="category" class="sr-only">商品分类</label><select id="category" v-model="category"><option value="">全部分类</option><option v-for="item in categories" :key="item.id" :value="item.slug">{{ item.name }}</option></select><button class="btn secondary">搜索 <ArrowRight :size="15"/></button></form>

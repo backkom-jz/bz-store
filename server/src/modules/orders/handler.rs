@@ -1,4 +1,4 @@
-use super::{dto::CreateOrderInput, service};
+use super::{dto::{CreateOrderInput, RefundInput}, service};
 use crate::{
     common::{
         ApiResult, AppError,
@@ -29,6 +29,7 @@ pub fn router() -> Router<AppState> {
         )
         .route("/api/v1/admin/orders", get(admin_list))
         .route("/api/v1/admin/orders/{id}", get(admin_detail))
+        .route("/api/v1/admin/orders/{id}/refund", post(refund))
 }
 async fn create(
     State(s): State<AppState>,
@@ -81,6 +82,14 @@ async fn admin_detail(
     Ok(ok(
         service::view(&mut *s.pool.acquire().await?, id, None).await?
     ))
+}
+async fn refund(
+    State(s): State<AppState>,
+    actor: AdminUser,
+    ApiPath(id): ApiPath<Uuid>,
+    ApiJson(input): ApiJson<RefundInput>,
+) -> ApiResult<impl IntoResponse> {
+    Ok(ok(service::refund(&s, &actor, id, input).await?))
 }
 async fn instructions(
     State(s): State<AppState>,

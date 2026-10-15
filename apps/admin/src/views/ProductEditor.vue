@@ -14,12 +14,14 @@ const categories = ref<Category[]>([]);
 const tutorialId = ref<string | null>(null);
 const title = ref('');
 const slug = ref('');
+const kind = ref<'tutorial' | 'digital' | 'service'>('tutorial');
 const price = ref('');
 const description = ref('');
 const status = ref<ProductStatus>('draft');
 const categoryId = ref('');
 const pending = ref(false);
 const saving = ref(false);
+const uploading = ref(false);
 const error = ref('');
 const notice = ref('');
 
@@ -57,6 +59,7 @@ async function load() {
     if (creating.value) {
       title.value = '';
       slug.value = '';
+      kind.value = 'tutorial';
       price.value = '';
       description.value = '';
       status.value = 'draft';
@@ -67,6 +70,7 @@ async function load() {
     product.value = row;
     title.value = row.title;
     slug.value = row.slug;
+    kind.value = row.type;
     price.value = centsToYuanInput(row.price_cents);
     description.value = row.description;
     status.value = row.status;
@@ -102,7 +106,7 @@ async function save() {
   const body = {
     title: title.value.trim(),
     slug: slug.value.trim(),
-    type: product.value?.type ?? 'tutorial',
+    type: kind.value,
     price_cents: priceCents,
     description: description.value,
     status: creating.value ? 'draft' : status.value,
@@ -125,6 +129,26 @@ async function save() {
     error.value = reason instanceof Error ? reason.message : '保存失败，请重试';
   } finally {
     saving.value = false;
+  }
+}
+
+async function uploadFile(event: Event) {
+  const input = event.target as HTMLInputElement;
+  const file = input.files?.[0];
+  input.value = '';
+  if (!file || !product.value) return;
+  uploading.value = true;
+  error.value = '';
+  notice.value = '';
+  const body = new FormData();
+  body.append('file', file);
+  try {
+    await api.request('/admin/products/' + product.value.id + '/file', { method: 'POST', body });
+    notice.value = '交付文件已上传。发布前请确认商品状态。';
+  } catch (reason) {
+    error.value = reason instanceof Error ? reason.message : '上传失败，请重试';
+  } finally {
+    uploading.value = false;
   }
 }
 
@@ -154,6 +178,20 @@ watch(() => route.fullPath, () => void load(), { immediate: true });
       <p class="hint">小写字母、数字和单连字符，例如 rust-axum-starter。</p>
     </div>
     <div class="field">
+      <label for="kind">类型</label>
+      <select id="kind" v-model="kind" :disabled="saving || !creating">
+        <option value="tutorial">教程</option>
+        <option value="digital">数字商品</option>
+        <option value="service">服务</option>
+      </select>
+      <p class="hint">创建后不能改类型。教程需要已发布章节，数字商品需要 PDF 或 ZIP，服务在付款后进入工单。</p>
+    </div>
+    <div v-if="product && kind === 'digital'" class="field">
+      <label for="asset">交付文件</label>
+      <input id="asset" type="file" accept="application/pdf,application/zip,.pdf,.zip" :disabled="uploading" @change="uploadFile">
+      <p class="hint">仅支持 5 MiB 以内的 PDF 或 ZIP。已有订单后不能更换。</p>
+    </div>
+    <div class="field">
       <label for="price">价格（元）</label>
       <input id="price" v-model="price" inputmode="decimal" autocomplete="off" required placeholder="99.00" :disabled="saving">
       <p class="hint">{{ priceHint }}</p>
@@ -176,7 +214,7 @@ watch(() => route.fullPath, () => void load(), { immediate: true });
         <option value="published">已发布</option>
         <option value="archived">已下架</option>
       </select>
-      <p class="hint">发布前，关联教程和至少一个非预览章节都需要是已发布。</p>
+      <p class="hint">教程需先发布章节；数字商品需先上传文件；服务可以直接发布。</p>
     </div>
     <p v-if="notice" class="notice" role="status">{{ notice }}</p>
     <p v-if="error" class="error" role="alert">{{ error }}</p>
