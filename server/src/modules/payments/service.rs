@@ -73,7 +73,12 @@ pub async fn approve(
     let next_status = match item.get::<String, _>("product_type").as_str() {
         "tutorial" | "digital" => {
             if item.get::<String, _>("product_type") == "digital" {
-                let ready: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM product_files WHERE product_id=?)").bind(product_id).fetch_one(&mut *tx).await?;
+                let ready: bool = sqlx::query_scalar(
+                    "SELECT EXISTS(SELECT 1 FROM product_files WHERE product_id=?)",
+                )
+                .bind(product_id)
+                .fetch_one(&mut *tx)
+                .await?;
                 if !ready {
                     return Err(AppError::conflict("数字商品还没有可交付文件"));
                 }

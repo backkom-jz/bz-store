@@ -175,6 +175,54 @@ impl TestApp {
         sqlx::query("INSERT INTO site_settings(setting_key,value_json) VALUES('manual_payment',?) ON DUPLICATE KEY UPDATE value_json=VALUES(value_json)").bind(json!({"channel":"bank","payee":"TEST ONLY","account":"NOT A REAL ACCOUNT","instructions":"Integration test. Never transfer real money."})).execute(&self.state.pool).await.unwrap();
     }
 }
+
+#[cfg(test)]
+mod smtp_test_config_tests {
+    use super::{Config, smtp_test_config};
+
+    #[test]
+    fn uses_explicit_test_smtp_settings() {
+        let config = smtp_test_config(
+            "mail.test.invalid".into(),
+            2525,
+            true,
+            "DevStore Test <sink@example.test>".into(),
+        );
+        assert_eq!(config.smtp_host, "mail.test.invalid");
+        assert_eq!(config.smtp_port, 2525);
+        assert!(config.smtp_tls);
+        assert_eq!(config.from, "DevStore Test <sink@example.test>");
+
+        let app_config = Config {
+            env: "test".into(),
+            port: 28080,
+            database_url: "mysql://test_user:secret@mysql.test.invalid:3306/bz_ztore_test".into(),
+            redis_url: "redis://redis.test.invalid:6379/4".into(),
+            site_url: "http://127.0.0.1:28088".into(),
+            jwt_secret: "j".repeat(32),
+            csrf_secret: "c".repeat(32),
+            s3_endpoint: "https://oss-test.invalid".into(),
+            s3_access_key: "test-access-key".into(),
+            s3_secret_key: "test-secret-key".into(),
+            s3_bucket: "devstore-test".into(),
+            s3_region: "test-region".into(),
+            s3_virtual_hosted: false,
+            trusted_proxies: vec![],
+            email: Some(config.clone()),
+            mfa_encryption_key: Some([23_u8; 32]),
+        };
+        assert!(app_config.validate().is_ok());
+
+        let mut plaintext_remote = app_config;
+        plaintext_remote.email = Some(smtp_test_config(
+            "mail.test.invalid".into(),
+            2525,
+            false,
+            "DevStore Test <sink@example.test>".into(),
+        ));
+        assert!(plaintext_remote.validate().is_err());
+    }
+}
 pub struct TestResponse {
     pub status: u16,
     pub body: Value,
@@ -187,18 +235,33 @@ pub struct Session {
     pub csrf: String,
     pub id: Uuid,
 }
+
+fn smtp_test_config(host: String, port: u16, tls: bool, from: String) -> EmailConfig {
+    EmailConfig {
+        smtp_host: host,
+        smtp_port: port,
+        smtp_username: String::new(),
+        smtp_password: String::new(),
+        smtp_tls: tls,
+        from,
+        outbox_key: [17_u8; 32],
+    }
+}
+
 impl TestApp {
     pub async fn start() -> Self {
         let mut config = Config::from_env().expect("test environment");
-        config.email = Some(EmailConfig {
-            smtp_host: "127.0.0.1".into(),
-            smtp_port: 1025,
-            smtp_username: String::new(),
-            smtp_password: String::new(),
-            smtp_tls: false,
-            from: "DevStore Test <test@example.test>".into(),
-            outbox_key: [17_u8; 32],
-        });
+        let smtp_host = std::env::var("SMTP_TEST_HOST").expect("SMTP_TEST_HOST");
+        let smtp_port = std::env::var("SMTP_TEST_PORT")
+            .expect("SMTP_TEST_PORT")
+            .parse()
+            .expect("valid SMTP_TEST_PORT");
+        let smtp_tls = std::env::var("SMTP_TEST_TLS")
+            .expect("SMTP_TEST_TLS")
+            .parse()
+            .expect("valid SMTP_TEST_TLS");
+        let smtp_from = std::env::var("SMTP_TEST_FROM").expect("SMTP_TEST_FROM");
+        config.email = Some(smtp_test_config(smtp_host, smtp_port, smtp_tls, smtp_from));
         config.mfa_encryption_key = Some([23_u8; 32]);
         config.s3_bucket = std::env::var("S3_BUCKET").unwrap();
         devstore_server::infrastructure::storage::create_bucket(&config)

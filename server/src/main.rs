@@ -1,6 +1,8 @@
 #[tokio::main]
 async fn main() {
-    dotenvy::dotenv().ok();
+    if std::env::var("APP_ENV").as_deref() != Ok("test") {
+        dotenvy::dotenv().ok();
+    }
     tracing_subscriber::fmt()
         .json()
         .with_env_filter(
@@ -65,7 +67,8 @@ async fn main() {
             }
         }
     });
-    let listener = tokio::net::TcpListener::bind(("0.0.0.0", port))
+    let host = std::env::var("APP_HOST").unwrap_or_else(|_| "0.0.0.0".into());
+    let listener = tokio::net::TcpListener::bind((host.as_str(), port))
         .await
         .unwrap();
     axum::serve(

@@ -12,7 +12,7 @@ use utoipa::OpenApi;
     info(
         title = "DevStore API",
         version = "1.0.0",
-        description = "Scope A: tutorial checkout. Cookie authentication; mutations require exact Origin and X-CSRF-Token. All responses are private/no-store. Amounts are integer CNY cents."
+        description = "Tutorial, digital product and service checkout; manual payment review and refund registration; private downloads, tickets and blog publishing. Cookie authentication; mutations require exact Origin and X-CSRF-Token. All responses are private/no-store. Amounts are integer CNY cents."
     ),
     components(schemas(
         Credentials,
@@ -33,7 +33,81 @@ pub async fn document() -> axum::Json<Value> {
     doc["components"]["securitySchemes"] = json!({"session":{"type":"apiKey","in":"cookie","name":"ds_access"},"refresh":{"type":"apiKey","in":"cookie","name":"ds_refresh"}});
     doc["components"]["schemas"]["Envelope"] = json!({"type":"object","required":["code","message","data","request_id"],"properties":{"code":{"type":"string"},"message":{"type":"string"},"data":{},"request_id":{"type":"string","format":"uuid"}}});
     doc["components"]["schemas"]["Receipt"] = json!({"type":"object","required":["file"],"properties":{"file":{"type":"string","format":"binary","description":"One fully decodable PNG/JPEG, max 5 MiB, each dimension <=8000, <=20 million pixels. Full multipart request <=6 MiB. Stored privately; not malware-scanned."}}});
+    doc["components"]["schemas"]["DigitalAsset"] = json!({"type":"object","required":["file"],"properties":{"file":{"type":"string","format":"binary","description":"Private PDF or ZIP, maximum 5 MiB. Files cannot be replaced after the product has orders."}}});
+    doc["components"]["schemas"]["RefundInput"] = json!({"type":"object","additionalProperties":false,"required":["amount_cents","reference_no","note"],"properties":{"amount_cents":{"type":"integer","minimum":0,"maximum":100000000},"reference_no":{"type":"string","maxLength":128},"note":{"type":"string","maxLength":2000}}});
+    doc["components"]["schemas"]["TicketMessage"] = json!({"type":"object","additionalProperties":false,"required":["body"],"properties":{"body":{"type":"string","maxLength":4000}}});
+    doc["components"]["schemas"]["BlogInput"] = json!({"type":"object","additionalProperties":false,"required":["title","slug","excerpt","content_md","status"],"properties":{"title":{"type":"string","maxLength":200},"slug":{"type":"string","pattern":"^[a-z0-9]+(-[a-z0-9]+)*$","maxLength":220},"excerpt":{"type":"string","maxLength":500},"content_md":{"type":"string","maxLength":100000},"status":{"type":"string","enum":["draft","published"]}}});
     let routes = [
+        (
+            "post",
+            "/admin/products/{id}/file",
+            "Attach private digital file",
+            "DigitalAsset",
+            true,
+        ),
+        (
+            "get",
+            "/me/downloads/{id}",
+            "Download file after checking current ownership",
+            "",
+            true,
+        ),
+        (
+            "post",
+            "/admin/orders/{id}/refund",
+            "Record an externally completed whole-order refund",
+            "RefundInput",
+            true,
+        ),
+        ("get", "/me/tickets", "My service tickets", "", true),
+        (
+            "get",
+            "/me/tickets/{id}",
+            "My ticket and messages",
+            "",
+            true,
+        ),
+        (
+            "post",
+            "/me/tickets/{id}/messages",
+            "Send ticket message",
+            "TicketMessage",
+            true,
+        ),
+        (
+            "post",
+            "/me/tickets/{id}/accept",
+            "Accept service delivery",
+            "",
+            true,
+        ),
+        ("get", "/admin/tickets", "All service tickets", "", true),
+        (
+            "get",
+            "/admin/tickets/{id}",
+            "Ticket and messages for administration",
+            "",
+            true,
+        ),
+        (
+            "post",
+            "/admin/tickets/{id}/messages",
+            "Reply to service ticket",
+            "TicketMessage",
+            true,
+        ),
+        ("get", "/blog", "Published article summaries", "", false),
+        ("get", "/blog/{slug}", "Published article", "", false),
+        ("get", "/admin/blog", "All articles", "", true),
+        ("post", "/admin/blog", "Create article", "BlogInput", true),
+        ("get", "/admin/blog/{id}", "Article editor", "", true),
+        (
+            "patch",
+            "/admin/blog/{id}",
+            "Replace article fields",
+            "BlogInput",
+            true,
+        ),
         ("get", "/health/live", "Liveness", "", false),
         ("get", "/health/ready", "Dependency readiness", "", false),
         ("post", "/auth/register", "Register", "Credentials", false),
@@ -230,6 +304,9 @@ pub async fn document() -> axum::Json<Value> {
                 json!({"description":"Registration accepted; verification email may follow"});
         }
         if method == "post"
+            && !path.ends_with("/refund")
+            && !path.ends_with("/accept")
+            && !path.ends_with("/messages")
             && !path.ends_with("/approve")
             && !path.ends_with("/reject")
             && !path.ends_with("/cancel")
@@ -265,13 +342,13 @@ pub async fn document() -> axum::Json<Value> {
             params.push(json!({"name":"Idempotency-Key","in":"header","required":true,"schema":{"type":"string","minLength":16,"maxLength":128},"description":"Visible ASCII, scoped to user. Keep stable across retries."}));
         }
         if !schema.is_empty() {
-            let mime = if schema == "Receipt" {
+            let mime = if matches!(schema, "Receipt" | "DigitalAsset") {
                 "multipart/form-data"
             } else {
                 "application/json"
             };
             op["requestBody"] = json!({"required":true,"content":{mime:{"schema":{"$ref":format!("#/components/schemas/{schema}")}}}});
-            if method == "patch" {
+            if method == "patch" && schema != "BlogInput" {
                 let partial = format!("{schema}Patch");
                 let mut s = doc["components"]["schemas"][schema].clone();
                 s.as_object_mut().expect("object schema").remove("required");
@@ -283,8 +360,70 @@ pub async fn document() -> axum::Json<Value> {
         if path.ends_with("/proof") && method == "get" || path.contains("/payment-proof/") {
             op["responses"]["200"]["content"] = json!({"image/png":{"schema":{"type":"string","format":"binary"}},"image/jpeg":{"schema":{"type":"string","format":"binary"}}});
         }
+        if path == "/me/downloads/{id}" {
+            op["responses"]["200"]["content"] = json!({"application/pdf":{"schema":{"type":"string","format":"binary"}},"application/zip":{"schema":{"type":"string","format":"binary"}}});
+        }
         op["parameters"] = json!(params);
         doc["paths"][path][method] = op;
     }
     axum::Json(doc)
+}
+
+#[cfg(test)]
+mod tests {
+    #[tokio::test]
+    async fn delivery_and_blog_operations_are_documented_with_authentication() {
+        let axum::Json(doc) = super::document().await;
+        for (method, path) in [
+            ("post", "/admin/products/{id}/file"),
+            ("get", "/me/downloads/{id}"),
+            ("post", "/admin/orders/{id}/refund"),
+            ("get", "/me/tickets"),
+            ("get", "/me/tickets/{id}"),
+            ("post", "/me/tickets/{id}/messages"),
+            ("post", "/me/tickets/{id}/accept"),
+            ("get", "/admin/tickets"),
+            ("get", "/admin/tickets/{id}"),
+            ("post", "/admin/tickets/{id}/messages"),
+            ("get", "/admin/blog"),
+            ("post", "/admin/blog"),
+            ("get", "/admin/blog/{id}"),
+            ("patch", "/admin/blog/{id}"),
+        ] {
+            let operation = &doc["paths"][path][method];
+            assert!(operation.is_object(), "missing {method} {path}");
+            assert_eq!(operation["security"], serde_json::json!([{"session": []}]));
+            if method != "get" {
+                assert!(
+                    operation["parameters"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .any(|parameter| parameter["name"] == "X-CSRF-Token"
+                            && parameter["required"] == true)
+                );
+            }
+        }
+        for path in ["/blog", "/blog/{slug}"] {
+            assert!(doc["paths"][path]["get"].is_object());
+            assert!(doc["paths"][path]["get"]["security"].is_null());
+        }
+    }
+
+    #[tokio::test]
+    async fn file_upload_and_download_describe_binary_payloads() {
+        let axum::Json(doc) = super::document().await;
+        assert_eq!(
+            doc["paths"]["/admin/products/{id}/file"]["post"]["requestBody"]["content"]["multipart/form-data"]
+                ["schema"]["$ref"],
+            "#/components/schemas/DigitalAsset"
+        );
+        for mime in ["application/pdf", "application/zip"] {
+            assert_eq!(
+                doc["paths"]["/me/downloads/{id}"]["get"]["responses"]["200"]["content"][mime]["schema"]
+                    ["format"],
+                "binary"
+            );
+        }
+    }
 }

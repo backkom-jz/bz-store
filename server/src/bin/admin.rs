@@ -44,7 +44,9 @@ enum Command {
 }
 #[tokio::main]
 async fn main() {
-    dotenvy::dotenv().ok();
+    if std::env::var("APP_ENV").as_deref() != Ok("test") {
+        dotenvy::dotenv().ok();
+    }
     if let Err(error) = run(Cli::parse()).await {
         eprintln!("{}: {}", error.code, error.message);
         std::process::exit(1);
@@ -81,9 +83,13 @@ async fn run(cli: Cli) -> ApiResult<()> {
             let product =
                 devstore_server::modules::admin::operations::seed_demo(&state, &actor).await?;
             println!("Demo tutorial ready: {}", product["slug"]);
-            println!("Demo catalog: demo-rust-notes, demo-architecture-review, demo-retired-sample");
+            println!(
+                "Demo catalog: demo-rust-notes, demo-architecture-review, demo-retired-sample"
+            );
             println!("Demo blog: shipping-digital-goods");
-            println!("Sample orders were attached to this admin: one download, one open ticket, one refunded order");
+            println!(
+                "Sample orders were attached to this admin: one download, one open ticket, one refunded order"
+            );
         }
         Command::PaymentConfig { admin_email, file } => {
             let actor = operator(&state, &admin_email).await?;

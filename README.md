@@ -1,28 +1,17 @@
 # DevStore
 
-Rust / Nuxt 4 / Vue 3 教程商城。开发中的 A 阶段：人工付款与教程授权闭环。
+Rust / Nuxt 4 / Vue 3 教程商城。支持教程阅读、数字文件交付、基础服务工单、人工收款与退款登记、博客。当前发布验收状态见 [测试与交付回归记录](docs/verification/cloud-test-environment.md)。
 
 ## 开发环境
 
-Rust 1.97、Docker Compose；前端使用 Node 24。应用使用 MySQL，开发和集成测试连接专用 RDS 数据库，不启动本机 MySQL。
+Rust 1.97、Node 24、Docker Compose。本地仅运行一套 `devstore` 开发栈：gateway、API、Web、Redis 和 RustFS；MySQL 使用 RDS 上独立的开发库 `bz_ztore`。不运行本机数据库或病毒扫描容器。
 
-设置 `.env` 中的 `MYSQL_TEST_DATABASE_URL`，必须指向隔离的 `bz_ztore_test`，不得使用运行库 `bz_ztore` 或 ERP 数据库。CI 会提供临时 MySQL 测试服务；本地集成测试不会回退到应用数据库。
-
-当前 MySQL 版只支持在新建的空 `bz_ztore` 数据库中初始化。此前 PostgreSQL 版本的迁移文件已改为 MySQL 方言，不能直接对旧 PostgreSQL 数据库原地运行；如需保留旧数据，必须先制定并验证单独的数据导出、映射、导入及行数/业务校验方案。
-
-启动 Redis 和本地开发对象存储：
-
-```sh
-docker compose -f deploy/docker-compose.test.yml up -d redis storage
-bash scripts/test-server.sh all
-```
-
-测试仅连接 `MYSQL_TEST_DATABASE_URL` 指定的隔离库；每个测试启动时清空 DevStore 业务表，保留迁移记录。测试对象存储桶和凭据不用于生产。
+本地和 GitHub CI 只运行单元测试、类型检查和构建。集成测试及 Playwright E2E 在无 Docker 的云端专用测试环境执行，配置、资源、报告及操作步骤见 [云端测试环境](docs/operations/cloud-test-environment.md)。不要将云测试配置放入本地 `.env`。
 付款凭证只接受经过完整解码的 PNG/JPEG 图片，限制 5 MiB、8000 边长和 2000 万像素，并保存在私有对象存储中。当前版本不运行恶意软件扫描；管理员应在核对付款时人工检查凭证，不要打开凭证中的外部链接或执行其中内容。
 
 ## 本地运行
 
-只监听 `127.0.0.1:80`，通过 `/etc/hosts` 映射 `127.0.0.1 bz-store.local` 后访问 `http://bz-store.local`。数据库、Redis 和对象存储不对外发布。这是本机闭环，不能直接当作公网生产环境。
+gateway 只监听 `127.0.0.1:8088`，在 `/etc/hosts` 添加 `127.0.0.1 bz-store.local` 后访问 `http://bz-store.local:8088`。本地端口与其他 Nginx 的 80/443 分开；Redis 和对象存储不对外发布。
 
 ```sh
 cp .env.example .env
@@ -64,16 +53,17 @@ docker compose --env-file .env -f deploy/docker-compose.yml logs -f api web gate
 docker compose --env-file .env -f deploy/docker-compose.yml stop
 ```
 
-前台是 `http://bz-store.local/`，后台是 `http://bz-store.local/admin/`。
+前台是 `http://bz-store.local:8088/`，后台是 `http://bz-store.local:8088/admin/`。已有 `.env` 也需将 `SITE_URL` 更新为 `http://bz-store.local:8088`，启动脚本会检查来源是否一致。
 
-检查与浏览器验收：
+本地快速检查（不会启动 Docker、连接业务服务或运行集成/E2E）：
 
 ```sh
 bash scripts/check.sh
-bash scripts/test-e2e.sh
 ```
 
-验收记录见 docs/verification/tutorial-checkout.md。生产域名为 `https://store.bengzi.cn`；公网 Compose 覆盖层通过 `deploy/docker-compose.public.yml` 启用，并从 `TLS_CERT_DIR` 挂载证书。DNS、TLS 和公网主机配置仍需在部署环境验收。
+`check.sh` 运行脚本/网关单元测试、Rust fmt/Clippy/library/binary 单测、前端和 E2E 支持代码类型检查、前端单测及 web/admin 构建。集成与浏览器验收仅在云端运行；CI 不创建数据库或测试 Compose。
+
+生产域名为 `https://store.bengzi.cn`；无 Docker 的 Rocky Linux 发布见 [IP 上线说明](docs/operations/rocky10-ip-release.md)。已有公网 Compose 覆盖层保留供独立部署使用。本地卷和旧测试容器清理的边界见 [云端测试与本地收敛](docs/operations/cloud-test-environment.md#本地旧容器收敛)。
 
 邮箱、管理员 MFA 与备份初始化见 [运维说明](docs/operations/auth-email-mfa.md) 和 [MySQL 备份恢复说明](docs/operations/mysql-backups.md)。
 上传校验与人工审核边界见 [上传文件处理说明](docs/operations/uploads.md)。

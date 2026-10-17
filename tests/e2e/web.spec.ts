@@ -25,6 +25,6 @@ test('registration requires email verification and an empty library is usable',a
  await page.getByLabel('密码',{exact:true}).fill('Browser-test-password-42');
  await page.getByRole('button',{name:'登录'}).click();
  await expect(page).toHaveURL(origin+'/');
- await page.goto('/user/library');await expect(page.getByText('还没有已购教程')).toBeVisible();
- await page.getByRole('link',{name:'去探索教程'}).click();await expect(page).toHaveURL(/\/tutorials$/);
+ await page.goto('/user/library');await expect(page.getByText('还没有已购内容')).toBeVisible();
+ await page.getByRole('link',{name:'去看看商品'}).click();await expect(page).toHaveURL(/\/products$/);
 });

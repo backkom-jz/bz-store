@@ -7,10 +7,11 @@ if [[ -x .runtime/node24/node_modules/.bin/node ]]; then
   export PATH="$PWD/.runtime/node24/node_modules/.bin:$PATH"
 fi
 export NUXT_TELEMETRY_DISABLED=1
+node --test scripts/test-cloud-config.test.mjs scripts/e2e-runner.test.mjs
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
-docker compose -f deploy/docker-compose.test.yml up -d --wait --wait-timeout 180 redis storage
-bash scripts/test-server.sh all
+cargo test --workspace --lib
+cargo test --workspace --bins
 npm run typecheck
 npm run test:unit
 npm run build --workspace @devstore/web

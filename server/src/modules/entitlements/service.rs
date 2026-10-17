@@ -14,11 +14,10 @@ pub async fn purchase_state(
     actor: &crate::middleware::auth::CurrentUser,
     product_id: Uuid,
 ) -> ApiResult<serde_json::Value> {
-    let exists: bool =
-        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM products WHERE id=?)")
-            .bind(product_id)
-            .fetch_one(&state.pool)
-            .await?;
+    let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM products WHERE id=?)")
+        .bind(product_id)
+        .fetch_one(&state.pool)
+        .await?;
     if !exists {
         return Err(crate::common::AppError::missing());
     }
@@ -42,10 +41,11 @@ pub async fn purchase_state(
     .bind(product_id)
     .fetch_optional(&state.pool)
     .await?;
-    let file_id: Option<Uuid> = sqlx::query_scalar("SELECT file_id FROM product_files WHERE product_id=?")
-        .bind(product_id)
-        .fetch_optional(&state.pool)
-        .await?;
+    let file_id: Option<Uuid> =
+        sqlx::query_scalar("SELECT file_id FROM product_files WHERE product_id=?")
+            .bind(product_id)
+            .fetch_optional(&state.pool)
+            .await?;
     Ok(serde_json::json!({
         "owned": owned,
         "open_order_id": open_order_id,

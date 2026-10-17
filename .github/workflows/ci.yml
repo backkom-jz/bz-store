@@ -6,23 +6,6 @@ jobs:
   check:
     runs-on: ubuntu-latest
     timeout-minutes: 90
-    services:
-      mysql:
-        image: mysql:8.4
-        env:
-          MYSQL_DATABASE: bz_ztore_test
-          MYSQL_USER: devstore_test
-          MYSQL_PASSWORD: devstore_test_only
-          MYSQL_ROOT_PASSWORD: root_test_only
-        ports:
-          - 3306:3306
-        options: >-
-          --health-cmd="mysqladmin ping -h 127.0.0.1 -udevstore_test -pdevstore_test_only"
-          --health-interval=5s
-          --health-timeout=3s
-          --health-retries=30
-    env:
-      MYSQL_TEST_DATABASE_URL: mysql://devstore_test:devstore_test_only@127.0.0.1:3306/bz_ztore_test
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -34,11 +17,4 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
-      - run: cargo test -p devstore-server --test mysql_database_target
-      - run: scripts/test-deploy-config.sh
-      - run: python3 scripts/backup/test_mysql_defaults.py
       - run: bash scripts/check.sh
-      - run: npx playwright install --with-deps chromium
-      - run: bash scripts/test-e2e.sh
-        env:
-          CI: "1"

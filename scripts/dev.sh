@@ -9,12 +9,13 @@ if grep -q 'REPLACE' .env; then
   echo ".env 仍包含 REPLACE 占位符。请填入本机密码和密钥后再启动。"
   exit 1
 fi
+bash scripts/check-local-site-url.sh .env
 if ! grep -q 'bz-store.local' /etc/hosts; then
   echo "请在 /etc/hosts 中添加：127.0.0.1 bz-store.local" >&2
   exit 1
 fi
 docker compose --env-file .env -f deploy/docker-compose.yml up -d --build
-echo "等待 http://bz-store.local/api/v1/health/ready 。"
+echo "等待 http://bz-store.local:8088/api/v1/health/ready 。"
 echo "初始化私有存储桶。"
 storage_ready=0
 for _ in $(seq 1 30); do
@@ -29,8 +30,8 @@ if [[ "$storage_ready" -ne 1 ]]; then
   exit 1
 fi
 for _ in $(seq 1 90); do
-  if curl -fsS http://bz-store.local/api/v1/health/ready >/dev/null; then
-    echo "DevStore 已在 http://bz-store.local 就绪。这是本地入口，不是公网生产部署。"
+  if curl -fsS http://bz-store.local:8088/api/v1/health/ready >/dev/null; then
+    echo "DevStore 已在 http://bz-store.local:8088 就绪。这是本地入口，不是公网生产部署。"
     echo "初始化管理员：printf '%s\n' '你的密码' | docker compose --env-file .env -f deploy/docker-compose.yml exec -T api admin create --email you@example.com --password-stdin"
     echo "示例教程：docker compose --env-file .env -f deploy/docker-compose.yml exec -T api admin seed-demo --admin-email you@example.com"
     echo "收款配置：docker compose --env-file .env -f deploy/docker-compose.yml exec -T api admin payment-config --admin-email you@example.com --file /path/payment.json"

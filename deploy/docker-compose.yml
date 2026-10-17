@@ -7,7 +7,7 @@ services:
     environment:
       API_UPSTREAM: api:8080
       WEB_UPSTREAM: web:3000
-    ports: ["127.0.0.1:80:80"]
+    ports: ["127.0.0.1:8088:80"]
     networks:
       default:
         ipv4_address: 172.31.255.2

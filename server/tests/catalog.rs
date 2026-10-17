@@ -29,22 +29,52 @@ async fn it_demo_seed_is_explicit_idempotent_and_has_no_payment_account() {
     let t = app.get("/api/v1/tutorials/rust-axum-starter").await;
     assert_eq!(t.status, 200);
     assert_eq!(t.body["data"]["chapters"].as_array().unwrap().len(), 2);
-    for slug in ["demo-rust-notes", "demo-architecture-review", "demo-retired-sample"] {
-        assert_eq!(app.get(&format!("/api/v1/products/{slug}")).await.status, 200, "{slug}");
+    for slug in [
+        "demo-rust-notes",
+        "demo-architecture-review",
+        "demo-retired-sample",
+    ] {
+        assert_eq!(
+            app.get(&format!("/api/v1/products/{slug}")).await.status,
+            200,
+            "{slug}"
+        );
     }
-    assert_eq!(app.get("/api/v1/blog/shipping-digital-goods").await.status, 200);
-    let library = app.request("GET", "/api/v1/me/library", json!({}), Some(&admin), &[]).await;
+    assert_eq!(
+        app.get("/api/v1/blog/shipping-digital-goods").await.status,
+        200
+    );
+    let library = app
+        .request("GET", "/api/v1/me/library", json!({}), Some(&admin), &[])
+        .await;
     assert_eq!(library.status, 200, "{}", library.body);
-    let titles: Vec<_> = library.body["data"]["items"].as_array().unwrap().iter().map(|item| item["title"].as_str().unwrap()).collect();
+    let titles: Vec<_> = library.body["data"]["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|item| item["title"].as_str().unwrap())
+        .collect();
     assert!(titles.contains(&"Rust 速查笔记"));
     assert!(!titles.contains(&"已退款的示例文件"));
-    let tickets = app.request("GET", "/api/v1/me/tickets", json!({}), Some(&admin), &[]).await;
+    let tickets = app
+        .request("GET", "/api/v1/me/tickets", json!({}), Some(&admin), &[])
+        .await;
     assert_eq!(tickets.status, 200, "{}", tickets.body);
     assert_eq!(tickets.body["data"]["items"].as_array().unwrap().len(), 1);
-    let orders: i64 = sqlx::query_scalar("SELECT count(*) FROM orders WHERE user_id=?").bind(admin.id).fetch_one(&app.state.pool).await.unwrap();
+    let orders: i64 = sqlx::query_scalar("SELECT count(*) FROM orders WHERE user_id=?")
+        .bind(admin.id)
+        .fetch_one(&app.state.pool)
+        .await
+        .unwrap();
     assert_eq!(orders, 3);
-    devstore_server::modules::admin::operations::seed_demo(&app.state, &actor).await.unwrap();
-    let orders_again: i64 = sqlx::query_scalar("SELECT count(*) FROM orders WHERE user_id=?").bind(admin.id).fetch_one(&app.state.pool).await.unwrap();
+    devstore_server::modules::admin::operations::seed_demo(&app.state, &actor)
+        .await
+        .unwrap();
+    let orders_again: i64 = sqlx::query_scalar("SELECT count(*) FROM orders WHERE user_id=?")
+        .bind(admin.id)
+        .fetch_one(&app.state.pool)
+        .await
+        .unwrap();
     assert_eq!(orders_again, 3);
 }
 

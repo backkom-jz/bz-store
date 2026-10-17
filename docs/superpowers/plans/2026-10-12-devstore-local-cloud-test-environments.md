@@ -284,3 +284,10 @@ Commit: `git add docs/operations/cloud-test-environment.md docs/verification/clo
 ## 执行顺序与交付门槛
 
 按 Task 1 → Task 2 → Task 3 → Task 4 → Task 5 → Task 6 顺序执行。Task 5 必须在专用云端测试资源准备完毕后运行；云端资源未就绪时可先完成 Task 1–4，但不得把测试改指向生产环境。Task 6 只在代码、文档和云端验证通过后执行。每个任务独立提交，最终对全分支做一次独立审查。
+
+
+## 2026-10-17 当前分支适配状态
+
+在 `feat/trade-regression` 基于 `878d6c2` 复用已审查的 `2e7975d` 基础设施，Task 1–4 的源码适配与本地完整检查已完成；保留当前 `0004_delivery.sql` 及新增交付能力，未混用另一分支的迁移。新增七项当前交付集成用例和三个桌面/移动浏览器场景，分别仅编译/类型检查。独立审查的三项 Important 已修正；详细证据与未执行边界见 [当前验收记录](../../verification/cloud-test-environment.md)。
+
+Task 5 仍待专用云端 SSH 与环境文件位置。Task 6 仍以前置云端验证通过为门槛，未修改 Docker 容器或卷。复用适配变更作为一个提交保存，避免为已实现的历史步骤重复建造代码。

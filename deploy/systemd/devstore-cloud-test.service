@@ -1,0 +1,26 @@
+[Unit]
+Description=DevStore isolated cloud integration and browser tests
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=devstore-test
+Group=devstore-test
+WorkingDirectory=/opt/devstore-test
+EnvironmentFile=/etc/devstore/cloud-test.env
+Environment=HOME=/var/lib/devstore-test
+Environment=PATH=/opt/node/bin:/var/lib/devstore-test/.cargo/bin:/usr/local/bin:/usr/bin:/bin
+Environment=CI=1
+Environment=CARGO_BUILD_JOBS=1
+ExecStart=/usr/bin/flock -n /var/lib/devstore-test/cloud-test.lock /usr/bin/bash scripts/test-cloud.sh all
+UMask=0077
+TimeoutStartSec=90min
+TimeoutStopSec=20s
+KillMode=control-group
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+Nice=10
+
+# Manual one-shot job: do not enable it at boot or attach it to production deployment.

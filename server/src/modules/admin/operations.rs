@@ -25,9 +25,14 @@ pub async fn seed_demo(state: &AppState, actor: &CurrentUser) -> ApiResult<Value
     let category: Uuid = sqlx::query_scalar("SELECT id FROM categories WHERE slug='rust'")
         .fetch_one(&mut *tx)
         .await?;
-    let tutorial_existed: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM products WHERE slug='rust-axum-starter')").fetch_one(&mut *tx).await?;
+    let tutorial_existed: bool =
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM products WHERE slug='rust-axum-starter')")
+            .fetch_one(&mut *tx)
+            .await?;
     let product = if tutorial_existed {
-        sqlx::query_scalar("SELECT id FROM products WHERE slug='rust-axum-starter'").fetch_one(&mut *tx).await?
+        sqlx::query_scalar("SELECT id FROM products WHERE slug='rust-axum-starter'")
+            .fetch_one(&mut *tx)
+            .await?
     } else {
         let product = Uuid::new_v4();
         sqlx::query("INSERT INTO products(id,title,slug,type,price_cents,description,is_demo,category_id) VALUES(?,'Rust + Axum：从接口到交易闭环','rust-axum-starter','tutorial',9900,'示例教程：围绕实际项目，学习类型安全的 API、数据库事务和部署。此内容用于本地演示。',true,?)").bind(product).bind(category).execute(&mut *tx).await?;
@@ -49,12 +54,42 @@ pub async fn seed_demo(state: &AppState, actor: &CurrentUser) -> ApiResult<Value
         ] {
             sqlx::query("INSERT INTO tutorial_chapters(id,tutorial_id,title,content_md,is_preview,sort_order,status) VALUES(?,?,?,?,?,?,'published')").bind(Uuid::new_v4()).bind(tutorial).bind(title).bind(content).bind(preview).bind(sort).execute(&mut *tx).await?;
         }
-        sqlx::query("UPDATE products SET status='published' WHERE id=?").bind(product).execute(&mut *tx).await?;
+        sqlx::query("UPDATE products SET status='published' WHERE id=?")
+            .bind(product)
+            .execute(&mut *tx)
+            .await?;
         product
     };
-    let notes = ensure_product(&mut tx, category, "demo-rust-notes", "digital", 0, "Rust 速查笔记", "示例数字商品：零元领取后可以下载一份 PDF。此内容用于本地演示。").await?;
-    let review = ensure_product(&mut tx, category, "demo-architecture-review", "service", 0, "架构评审服务", "示例服务：领取后会打开一张工单。此内容用于本地演示。").await?;
-    let retired = ensure_product(&mut tx, category, "demo-retired-sample", "digital", 0, "已退款的示例文件", "示例：对应订单已退款，再次下载会被拒绝。此内容用于本地演示。").await?;
+    let notes = ensure_product(
+        &mut tx,
+        category,
+        "demo-rust-notes",
+        "digital",
+        0,
+        "Rust 速查笔记",
+        "示例数字商品：零元领取后可以下载一份 PDF。此内容用于本地演示。",
+    )
+    .await?;
+    let review = ensure_product(
+        &mut tx,
+        category,
+        "demo-architecture-review",
+        "service",
+        0,
+        "架构评审服务",
+        "示例服务：领取后会打开一张工单。此内容用于本地演示。",
+    )
+    .await?;
+    let retired = ensure_product(
+        &mut tx,
+        category,
+        "demo-retired-sample",
+        "digital",
+        0,
+        "已退款的示例文件",
+        "示例：对应订单已退款，再次下载会被拒绝。此内容用于本地演示。",
+    )
+    .await?;
     let mut uploads = Vec::new();
     for product_id in [notes, retired] {
         if let Some(key) = ensure_demo_file(&mut tx, actor.id, product_id).await? {
@@ -62,25 +97,75 @@ pub async fn seed_demo(state: &AppState, actor: &CurrentUser) -> ApiResult<Value
         }
     }
     ensure_blog(&mut tx).await?;
-    ensure_sample_order(&mut tx, actor.id, notes, "demo-rust-notes", "digital", "Rust 速查笔记", "completed", true).await?;
-    ensure_sample_order(&mut tx, actor.id, review, "demo-architecture-review", "service", "架构评审服务", "fulfilling", false).await?;
-    ensure_sample_order(&mut tx, actor.id, retired, "demo-retired-sample", "digital", "已退款的示例文件", "refunded", false).await?;
+    ensure_sample_order(
+        &mut tx,
+        actor.id,
+        notes,
+        "demo-rust-notes",
+        "digital",
+        "Rust 速查笔记",
+        "completed",
+    )
+    .await?;
+    ensure_sample_order(
+        &mut tx,
+        actor.id,
+        review,
+        "demo-architecture-review",
+        "service",
+        "架构评审服务",
+        "fulfilling",
+    )
+    .await?;
+    ensure_sample_order(
+        &mut tx,
+        actor.id,
+        retired,
+        "demo-retired-sample",
+        "digital",
+        "已退款的示例文件",
+        "refunded",
+    )
+    .await?;
     if !tutorial_existed {
-        audit::record(&mut tx, actor.id, "demo.seed", product, json!({"source":"local_cli"})).await?;
+        audit::record(
+            &mut tx,
+            actor.id,
+            "demo.seed",
+            product,
+            json!({"source":"local_cli"}),
+        )
+        .await?;
     }
     let value = sqlx::query_scalar("SELECT JSON_OBJECT('id',BIN_TO_UUID(p.id),'category_id',BIN_TO_UUID(p.category_id),'type',p.type,'title',p.title,'slug',p.slug,'description',p.description,'price_cents',p.price_cents,'currency',p.currency,'status',p.status,'is_demo',p.is_demo,'created_at',p.created_at,'updated_at',p.updated_at) FROM products p WHERE id=?")
         .bind(product)
         .fetch_one(&mut *tx)
         .await?;
     for key in &uploads {
-        state.storage.put(&Path::from(key.as_str()), DEMO_PDF.to_vec().into()).await.map_err(|_| AppError::unavailable())?;
+        state
+            .storage
+            .put(&Path::from(key.as_str()), DEMO_PDF.to_vec().into())
+            .await
+            .map_err(|_| AppError::unavailable())?;
     }
     tx.commit().await?;
     Ok(value)
 }
 
-async fn ensure_product(tx: &mut sqlx::MySqlConnection, category: Uuid, slug: &str, kind: &str, price: i64, title: &str, description: &str) -> ApiResult<Uuid> {
-    if let Some(id) = sqlx::query_scalar("SELECT id FROM products WHERE slug=?").bind(slug).fetch_optional(&mut *tx).await? {
+async fn ensure_product(
+    tx: &mut sqlx::MySqlConnection,
+    category: Uuid,
+    slug: &str,
+    kind: &str,
+    price: i64,
+    title: &str,
+    description: &str,
+) -> ApiResult<Uuid> {
+    if let Some(id) = sqlx::query_scalar("SELECT id FROM products WHERE slug=?")
+        .bind(slug)
+        .fetch_optional(&mut *tx)
+        .await?
+    {
         return Ok(id);
     }
     let id = Uuid::new_v4();
@@ -90,8 +175,16 @@ async fn ensure_product(tx: &mut sqlx::MySqlConnection, category: Uuid, slug: &s
     Ok(id)
 }
 
-async fn ensure_demo_file(tx: &mut sqlx::MySqlConnection, owner: Uuid, product_id: Uuid) -> ApiResult<Option<String>> {
-    let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM product_files WHERE product_id=?)").bind(product_id).fetch_one(&mut *tx).await?;
+async fn ensure_demo_file(
+    tx: &mut sqlx::MySqlConnection,
+    owner: Uuid,
+    product_id: Uuid,
+) -> ApiResult<Option<String>> {
+    let exists: bool =
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM product_files WHERE product_id=?)")
+            .bind(product_id)
+            .fetch_one(&mut *tx)
+            .await?;
     if exists {
         return Ok(None);
     }
@@ -101,12 +194,20 @@ async fn ensure_demo_file(tx: &mut sqlx::MySqlConnection, owner: Uuid, product_i
         .bind(file_id).bind(owner).bind(&key).bind("application/pdf").bind(DEMO_PDF.len() as i64).bind(format!("{:x}", Sha256::digest(DEMO_PDF)))
         .execute(&mut *tx).await?;
     sqlx::query("INSERT INTO product_files(id,product_id,file_id) VALUES(?,?,?)")
-        .bind(Uuid::new_v4()).bind(product_id).bind(file_id).execute(&mut *tx).await?;
+        .bind(Uuid::new_v4())
+        .bind(product_id)
+        .bind(file_id)
+        .execute(&mut *tx)
+        .await?;
     Ok(Some(key))
 }
 
 async fn ensure_blog(tx: &mut sqlx::MySqlConnection) -> ApiResult<()> {
-    let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM blog_posts WHERE slug='shipping-digital-goods')").fetch_one(&mut *tx).await?;
+    let exists: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM blog_posts WHERE slug='shipping-digital-goods')",
+    )
+    .fetch_one(&mut *tx)
+    .await?;
     if exists {
         return Ok(());
     }
@@ -120,7 +221,15 @@ async fn ensure_blog(tx: &mut sqlx::MySqlConnection) -> ApiResult<()> {
     Ok(())
 }
 
-async fn ensure_sample_order(tx: &mut sqlx::MySqlConnection, user_id: Uuid, product_id: Uuid, slug: &str, kind: &str, title: &str, status: &str, grant: bool) -> ApiResult<()> {
+async fn ensure_sample_order(
+    tx: &mut sqlx::MySqlConnection,
+    user_id: Uuid,
+    product_id: Uuid,
+    slug: &str,
+    kind: &str,
+    title: &str,
+    status: &str,
+) -> ApiResult<()> {
     let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM order_items i JOIN orders o ON o.id=i.order_id WHERE i.product_id=? AND o.user_id=?)").bind(product_id).bind(user_id).fetch_one(&mut *tx).await?;
     if exists {
         return Ok(());
@@ -132,7 +241,7 @@ async fn ensure_sample_order(tx: &mut sqlx::MySqlConnection, user_id: Uuid, prod
         .bind(order_id).bind(order_no).bind(user_id).bind(status).execute(&mut *tx).await?;
     sqlx::query("INSERT INTO order_items(id,order_id,product_id,product_title,product_type,unit_price_cents,quantity,subtotal_cents) VALUES(?,?,?,?,?,0,1,0)")
         .bind(item_id).bind(order_id).bind(product_id).bind(title).bind(kind).execute(&mut *tx).await?;
-    if grant {
+    if status == "completed" {
         sqlx::query("INSERT INTO user_entitlements(id,user_id,order_item_id,product_id,status) VALUES(?,?,?,?,'active')")
             .bind(Uuid::new_v4()).bind(user_id).bind(item_id).bind(product_id).execute(&mut *tx).await?;
     }

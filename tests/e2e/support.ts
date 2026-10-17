@@ -1,18 +1,27 @@
 import {test as base,expect,request,type APIRequestContext,type Page} from '@playwright/test';
 import {execFileSync} from 'node:child_process';
 import {readFileSync} from 'node:fs';
-export const origin='http://127.0.0.1:18088';
-const mailpit='http://127.0.0.1:18025';
+import {redisCliInvocation} from '../../scripts/e2e-config.mjs';
+import {claimAdminCounter} from '../../scripts/e2e-admin-state.mjs';
+const configuredOrigin=process.env.E2E_BASE_URL;
+const mailbox=process.env.TEST_MAILBOX_API_URL;
+const redisValue=process.env.REDIS_TEST_URL;
+const dbValue=process.env.MYSQL_TEST_DATABASE_URL;
+if(process.env.DEVSTORE_TEST_ENV!=='cloud'||configuredOrigin!=='http://127.0.0.1:28088'||!mailbox||!redisValue||!dbValue||new URL(dbValue).pathname!=='/bz_ztore_test')throw new Error('E2E requires validated isolated cloud test settings');
+export const origin:string=configuredOrigin;
+const redisCommand=redisCliInvocation(redisValue,process.env);
+const mailboxBase=mailbox.replace(/\/$/,'');
+const mailboxApi=mailboxBase.endsWith('/api')?mailboxBase+'/v1':mailboxBase+'/api/v1';
 export const receiptPng=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==','base64');
 let lastAdminCounter=0;
 export function credentials(){const value=JSON.parse(readFileSync('.runtime/e2e.json','utf8')) as {email:string;password:string;totpSecret:string;mfaCounter:number};lastAdminCounter=Math.max(lastAdminCounter,value.mfaCounter);return value;}
 export async function nextTotpCode(secret:string){
  const alphabet='ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';let bits=0,acc=0;const bytes:number[]=[];for(const char of secret){acc=(acc<<5)|alphabet.indexOf(char);bits+=5;if(bits>=8){bits-=8;bytes.push((acc>>bits)&255);}}
- let counter=Math.floor(Date.now()/30000);while(counter<=lastAdminCounter){await new Promise(resolve=>setTimeout(resolve,Math.max(100,30000-(Date.now()%30000)+100)));counter=Math.floor(Date.now()/30000);}
+ let counter=Math.floor(Date.now()/30000);while(counter<=lastAdminCounter || !claimAdminCounter('.runtime/e2e.json',counter)){await new Promise(resolve=>setTimeout(resolve,Math.max(100,30000-(Date.now()%30000)+100)));counter=Math.floor(Date.now()/30000);}
  const data=Buffer.alloc(8);data.writeBigUInt64BE(BigInt(counter));const hmac=await import('node:crypto').then(({createHmac})=>createHmac('sha1',Buffer.from(bytes)).update(data).digest());const offset=hmac[19]&15;const value=(((hmac[offset]&127)<<24)|(hmac[offset+1]<<16)|(hmac[offset+2]<<8)|hmac[offset+3])%1000000;lastAdminCounter=counter;return String(value).padStart(6,'0');
 }
 export const test=base.extend<{resetLimits:void}>({resetLimits:[async({},use)=>{
- execFileSync('docker',['compose','-f','deploy/docker-compose.test.yml','exec','-T','redis','redis-cli','FLUSHDB'],{stdio:'pipe'});
+ execFileSync('redis-cli',redisCommand.args,{stdio:'pipe',env:redisCommand.env});
  await use();
 },{auto:true}]});
 export {expect};
@@ -22,14 +31,14 @@ export function hydrated(page:Page){
 export async function verifyMailbox(email:string,post:(path:string,data:unknown)=>Promise<{status:()=>number;text:()=>Promise<string>}>){
  const deadline=Date.now()+30000;let token='';
  while(Date.now()<deadline&&!token){
-  const index=await fetch(mailpit+'/api/v1/messages');
+  const index=await fetch(mailboxApi+'/messages');
   if(index.ok){const body=await index.json() as {messages?:Array<{ID:string;To?:Array<{Address:string}>}>};
    const message=body.messages?.find(item=>item.To?.some(to=>to.Address.toLowerCase()===email.toLowerCase()));
-   if(message){const detail=await fetch(mailpit+'/api/v1/message/'+message.ID);if(detail.ok){const mail=await detail.json() as {Text?:string};token=mail.Text?.match(/verify-email\?token=([^\s]+)/)?.[1]??'';}}
+   if(message){const detail=await fetch(mailboxApi+'/message/'+encodeURIComponent(message.ID));if(detail.ok){const mail=await detail.json() as {Text?:string};token=mail.Text?.match(/verify-email\?token=([^\s]+)/)?.[1]??'';}}
   }
   if(!token)await new Promise(resolve=>setTimeout(resolve,250));
  }
- if(!token)throw new Error('verification email did not arrive in local Mailpit');
+ if(!token)throw new Error('verification email did not arrive in the configured test mailbox');
  const response=await post('/api/v1/auth/verify-email',{token});expect(response.status(),await response.text()).toBe(200);
 }
 export async function adminApi(){

@@ -1,5 +1,10 @@
 use crate::{
-    common::{ApiResult, AppError, extractors::{ApiJson, ApiPath, ApiQuery}, ok, pagination::{ListQuery, slug, text}},
+    common::{
+        ApiResult, AppError,
+        extractors::{ApiJson, ApiPath, ApiQuery},
+        ok,
+        pagination::{ListQuery, slug, text},
+    },
     middleware::auth::AdminUser,
     state::AppState,
 };
@@ -47,34 +52,60 @@ fn validate(input: &PostInput) -> ApiResult<()> {
     Ok(())
 }
 
-async fn published(State(s): State<AppState>, ApiQuery(q): ApiQuery<ListQuery>) -> ApiResult<impl IntoResponse> {
+async fn published(
+    State(s): State<AppState>,
+    ApiQuery(q): ApiQuery<ListQuery>,
+) -> ApiResult<impl IntoResponse> {
     let q = q.validate()?;
     let items: Vec<Value> = sqlx::query_scalar("SELECT JSON_OBJECT('id',BIN_TO_UUID(id),'title',title,'slug',slug,'excerpt',excerpt,'published_at',published_at) FROM blog_posts WHERE status='published' ORDER BY published_at DESC,id DESC LIMIT ? OFFSET ?")
         .bind(q.size).bind(q.offset).fetch_all(&s.pool).await?;
-    let total: i64 = sqlx::query_scalar("SELECT count(*) FROM blog_posts WHERE status='published'").fetch_one(&s.pool).await?;
-    Ok(ok(json!({"items": items, "total": total, "page": q.page, "page_size": q.size})))
+    let total: i64 = sqlx::query_scalar("SELECT count(*) FROM blog_posts WHERE status='published'")
+        .fetch_one(&s.pool)
+        .await?;
+    Ok(ok(
+        json!({"items": items, "total": total, "page": q.page, "page_size": q.size}),
+    ))
 }
 
-async fn published_one(State(s): State<AppState>, ApiPath(slug): ApiPath<String>) -> ApiResult<impl IntoResponse> {
+async fn published_one(
+    State(s): State<AppState>,
+    ApiPath(slug): ApiPath<String>,
+) -> ApiResult<impl IntoResponse> {
     crate::common::pagination::slug(&slug)?;
     let row: Option<Value> = sqlx::query_scalar("SELECT JSON_OBJECT('id',BIN_TO_UUID(id),'title',title,'slug',slug,'excerpt',excerpt,'content_md',content_md,'published_at',published_at) FROM blog_posts WHERE slug=? AND status='published'")
         .bind(slug).fetch_optional(&s.pool).await?;
     Ok(ok(row.ok_or_else(AppError::missing)?))
 }
 
-async fn admin_list(State(s): State<AppState>, _: AdminUser, ApiQuery(q): ApiQuery<ListQuery>) -> ApiResult<impl IntoResponse> {
+async fn admin_list(
+    State(s): State<AppState>,
+    _: AdminUser,
+    ApiQuery(q): ApiQuery<ListQuery>,
+) -> ApiResult<impl IntoResponse> {
     let q = q.validate()?;
     let items: Vec<Value> = sqlx::query_scalar("SELECT JSON_OBJECT('id',BIN_TO_UUID(id),'title',title,'slug',slug,'excerpt',excerpt,'status',status,'published_at',published_at,'updated_at',updated_at) FROM blog_posts ORDER BY updated_at DESC,id DESC LIMIT ? OFFSET ?")
         .bind(q.size).bind(q.offset).fetch_all(&s.pool).await?;
-    let total: i64 = sqlx::query_scalar("SELECT count(*) FROM blog_posts").fetch_one(&s.pool).await?;
-    Ok(ok(json!({"items": items, "total": total, "page": q.page, "page_size": q.size})))
+    let total: i64 = sqlx::query_scalar("SELECT count(*) FROM blog_posts")
+        .fetch_one(&s.pool)
+        .await?;
+    Ok(ok(
+        json!({"items": items, "total": total, "page": q.page, "page_size": q.size}),
+    ))
 }
 
-async fn admin_one(State(s): State<AppState>, _: AdminUser, ApiPath(id): ApiPath<Uuid>) -> ApiResult<impl IntoResponse> {
+async fn admin_one(
+    State(s): State<AppState>,
+    _: AdminUser,
+    ApiPath(id): ApiPath<Uuid>,
+) -> ApiResult<impl IntoResponse> {
     Ok(ok(one(&s, id).await?))
 }
 
-async fn create(State(s): State<AppState>, _: AdminUser, ApiJson(input): ApiJson<PostInput>) -> ApiResult<impl IntoResponse> {
+async fn create(
+    State(s): State<AppState>,
+    _: AdminUser,
+    ApiJson(input): ApiJson<PostInput>,
+) -> ApiResult<impl IntoResponse> {
     validate(&input)?;
     let id = Uuid::new_v4();
     sqlx::query("INSERT INTO blog_posts(id,title,slug,excerpt,content_md,status,published_at) VALUES(?,?,?,?,?,?,IF(?='published',UTC_TIMESTAMP(6),NULL))")
@@ -83,7 +114,12 @@ async fn create(State(s): State<AppState>, _: AdminUser, ApiJson(input): ApiJson
     Ok((StatusCode::CREATED, ok(one(&s, id).await?)))
 }
 
-async fn update(State(s): State<AppState>, _: AdminUser, ApiPath(id): ApiPath<Uuid>, ApiJson(input): ApiJson<PostInput>) -> ApiResult<impl IntoResponse> {
+async fn update(
+    State(s): State<AppState>,
+    _: AdminUser,
+    ApiPath(id): ApiPath<Uuid>,
+    ApiJson(input): ApiJson<PostInput>,
+) -> ApiResult<impl IntoResponse> {
     validate(&input)?;
     let changed = sqlx::query("UPDATE blog_posts SET title=?,slug=?,excerpt=?,content_md=?,status=?,published_at=IF(?='published',COALESCE(published_at,UTC_TIMESTAMP(6)),NULL) WHERE id=?")
         .bind(input.title.trim()).bind(&input.slug).bind(input.excerpt.trim()).bind(&input.content_md).bind(&input.status).bind(&input.status).bind(id)
