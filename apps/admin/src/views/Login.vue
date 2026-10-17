@@ -30,8 +30,8 @@ async function submit() {
 <template>
   <main id="main" class="login-card panel">
     <p class="eyebrow">ADMIN</p>
-    <h1>核实到账，开通教程。</h1>
-    <p class="muted">使用管理员账号登录。普通用户账号无法进入后台。</p>
+    <h1>欢迎回到运营工作台。</h1>
+    <p class="muted">管理商品、处理付款、跟进服务交付。请使用管理员账号和动态验证码登录。</p>
     <p v-if="session.error" class="error" role="alert">{{ session.error }}</p>
     <p v-if="session.user && !session.user.is_admin" class="error" role="alert">当前登录的不是管理员。可以换一个管理员账号，或返回商城。</p>
     <form @submit.prevent="submit">

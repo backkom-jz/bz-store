@@ -73,6 +73,7 @@ test('buyer can resubmit after rejection and then read the paid chapter',async({
  await adminPage.getByLabel('密码').fill(operator.password);
  await adminPage.getByLabel('动态验证码或恢复码').fill(await nextTotpCode(operator.totpSecret));
  await adminPage.getByRole('button',{name:'登录后台'}).click();
+ await adminPage.goto('/admin/payments');
  await expect(adminPage.getByRole('heading',{name:'付款审核'})).toBeVisible();
  await adminPage.getByLabel('搜索订单号或邮箱').fill(orderNo);
  await adminPage.getByRole('button',{name:'搜索'}).click();
@@ -100,7 +101,7 @@ test('buyer can resubmit after rejection and then read the paid chapter',async({
  await adminPage.getByLabel('已核实真实收款记录').check();
  await expect(adminPage.getByRole('button',{name:'确认到账并开通'})).toBeEnabled();
  await adminPage.getByRole('button',{name:'确认到账并开通'}).click();
- await expect(adminPage.getByText('已核实到账，教程已开通。')).toBeVisible();
+ await expect(adminPage.getByText('已核实到账，订单已更新：教程与数字商品开通权益，服务订单进入工单交付。')).toBeVisible();
 
  await page.reload();
  await expect(page.getByRole('heading',{name:'教程已开通'})).toBeVisible();

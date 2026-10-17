@@ -35,8 +35,9 @@ onMounted(() => void load());
 
 <template>
   <header class="page-head">
-    <h1>教程</h1>
-    <p class="muted">从商品页创建教程。章节默认不公开，只有勾选预览后未购买用户才能阅读。</p>
+    <p class="eyebrow">商品与内容</p><h1>教程</h1>
+    <p class="muted">教程和商品分开发布：先在商品页创建教程，再准备章节并发布，最后回到商品页上架。免费预览只开放勾选的章节。</p>
+    <RouterLink class="btn secondary" to="/products">前往商品管理 →</RouterLink>
   </header>
   <form class="toolbar" @submit.prevent="search">
     <label class="sr-only" for="tutorial-q">搜索教程标题</label>

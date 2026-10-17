@@ -160,16 +160,35 @@ pub async fn cancel(state: &AppState, actor: &CurrentUser, id: Uuid) -> ApiResul
     Ok(result)
 }
 pub async fn list(state: &AppState, user: Option<Uuid>, q: Pagination) -> ApiResult<Value> {
-    let items:Vec<Value>=sqlx::query_scalar("SELECT JSON_MERGE_PATCH(JSON_OBJECT('id',BIN_TO_UUID(o.id),'order_no',o.order_no,'user_id',BIN_TO_UUID(o.user_id),'amount_cents',o.amount_cents,'currency',o.currency,'status',o.status,'expires_at',o.expires_at,'paid_at',o.paid_at,'created_at',o.created_at,'updated_at',o.updated_at),JSON_OBJECT('item',JSON_OBJECT('id',BIN_TO_UUID(i.id),'product_id',BIN_TO_UUID(i.product_id),'product_title',i.product_title,'product_type',i.product_type,'unit_price_cents',i.unit_price_cents,'quantity',i.quantity,'subtotal_cents',i.subtotal_cents,'currency',i.currency),'user_email',u.email)) FROM orders o JOIN order_items i ON i.order_id=o.id JOIN users u ON u.id=o.user_id WHERE (? IS NULL OR o.user_id=?) AND (?='' OR o.status=?) ORDER BY o.created_at DESC,o.id DESC LIMIT ? OFFSET ?").bind(user).bind(user).bind(&q.status).bind(&q.status).bind(q.size).bind(q.offset).fetch_all(&state.pool).await?;
-    let total: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM orders WHERE (? IS NULL OR user_id=?) AND (?='' OR status=?)",
-    )
+    // Both result rows and count use exactly the same ownership, status and literal-search filters.
+    let filter = " FROM orders o JOIN order_items i ON i.order_id=o.id JOIN users u ON u.id=o.user_id WHERE (? IS NULL OR o.user_id=?) AND (?='' OR o.status=?) AND (?='' OR LOCATE(LOWER(?),LOWER(o.order_no))>0 OR LOCATE(LOWER(?),LOWER(u.email))>0 OR LOCATE(LOWER(?),LOWER(i.product_title))>0)";
+    let select = "SELECT JSON_MERGE_PATCH(JSON_OBJECT('id',BIN_TO_UUID(o.id),'order_no',o.order_no,'user_id',BIN_TO_UUID(o.user_id),'amount_cents',o.amount_cents,'currency',o.currency,'status',o.status,'expires_at',o.expires_at,'paid_at',o.paid_at,'created_at',o.created_at,'updated_at',o.updated_at),JSON_OBJECT('item',JSON_OBJECT('id',BIN_TO_UUID(i.id),'product_id',BIN_TO_UUID(i.product_id),'product_title',i.product_title,'product_type',i.product_type,'unit_price_cents',i.unit_price_cents,'quantity',i.quantity,'subtotal_cents',i.subtotal_cents,'currency',i.currency),'user_email',u.email))";
+    let items: Vec<Value> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+        "{select}{filter} ORDER BY o.created_at DESC,o.id DESC LIMIT ? OFFSET ?"
+    )))
     .bind(user)
     .bind(user)
     .bind(&q.status)
     .bind(&q.status)
-    .fetch_one(&state.pool)
+    .bind(&q.q)
+    .bind(&q.q)
+    .bind(&q.q)
+    .bind(&q.q)
+    .bind(q.size)
+    .bind(q.offset)
+    .fetch_all(&state.pool)
     .await?;
+    let total: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT count(*){filter}")))
+        .bind(user)
+        .bind(user)
+        .bind(&q.status)
+        .bind(&q.status)
+        .bind(&q.q)
+        .bind(&q.q)
+        .bind(&q.q)
+        .bind(&q.q)
+        .fetch_one(&state.pool)
+        .await?;
     Ok(json!({"items":items,"total":total,"page":q.page,"page_size":q.size}))
 }
 pub async fn refund(

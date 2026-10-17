@@ -1,12 +1,12 @@
 # DevStore
 
-Rust / Nuxt 4 / Vue 3 教程商城。支持教程阅读、数字文件交付、基础服务工单、人工收款与退款登记、博客。当前发布验收状态见 [测试与交付回归记录](docs/verification/cloud-test-environment.md)。
+Rust / Nuxt 4 / Vue 3 教程商城。支持教程阅读、数字文件交付、基础服务工单、人工收款与退款登记、博客。当前工作以 [本地验证与微信一分钱流程](docs/verification/local-operations.md) 为准。
 
 ## 开发环境
 
 Rust 1.97、Node 24、Docker Compose。本地仅运行一套 `devstore` 开发栈：gateway、API、Web、Redis 和 RustFS；MySQL 使用 RDS 上独立的开发库 `bz_ztore`。不运行本机数据库或病毒扫描容器。
 
-本地和 GitHub CI 只运行单元测试、类型检查和构建。集成测试及 Playwright E2E 在无 Docker 的云端专用测试环境执行，配置、资源、报告及操作步骤见 [云端测试环境](docs/operations/cloud-test-environment.md)。不要将云测试配置放入本地 `.env`。
+本地和 GitHub CI 执行单元测试、类型检查和构建。当前不要求部署专用测试环境，也不需要提供云端测试主机。支付采用微信人工收款，使用 0.01 元验证下单、凭证提交、人工核账和权益开通流程；不接入微信支付商户 API。
 付款凭证只接受经过完整解码的 PNG/JPEG 图片，限制 5 MiB、8000 边长和 2000 万像素，并保存在私有对象存储中。当前版本不运行恶意软件扫描；管理员应在核对付款时人工检查凭证，不要打开凭证中的外部链接或执行其中内容。
 
 ## 本地运行
@@ -59,11 +59,15 @@ docker compose --env-file .env -f deploy/docker-compose.yml stop
 
 ```sh
 bash scripts/check.sh
+# 本机后台浏览器测试，接口采用本地夹具，不需要业务服务
+npm run test:admin
 ```
 
-`check.sh` 运行脚本/网关单元测试、Rust fmt/Clippy/library/binary 单测、前端和 E2E 支持代码类型检查、前端单测及 web/admin 构建。集成与浏览器验收仅在云端运行；CI 不创建数据库或测试 Compose。
+`check.sh` 运行脚本/网关单元测试、Rust fmt/Clippy/library/binary 单测、前端和 E2E 支持代码类型检查、前端单测及 web/admin 构建。本轮以本地检查与人工一分钱流程验证为准；保留的集成/浏览器测试源码不要求搭建额外环境，未执行的测试单独注明。CI 不创建数据库或测试 Compose。
 
-生产域名为 `https://store.bengzi.cn`；无 Docker 的 Rocky Linux 发布见 [IP 上线说明](docs/operations/rocky10-ip-release.md)。已有公网 Compose 覆盖层保留供独立部署使用。本地卷和旧测试容器清理的边界见 [云端测试与本地收敛](docs/operations/cloud-test-environment.md#本地旧容器收敛)。
+生产域名为 `https://store.bengzi.cn`；无 Docker 的 Rocky Linux 发布见 [IP 上线说明](docs/operations/rocky10-ip-release.md)。已有公网 Compose 覆盖层保留供独立部署使用。本轮不自动清理本地容器或数据卷。
 
 邮箱、管理员 MFA 与备份初始化见 [运维说明](docs/operations/auth-email-mfa.md) 和 [MySQL 备份恢复说明](docs/operations/mysql-backups.md)。
 上传校验与人工审核边界见 [上传文件处理说明](docs/operations/uploads.md)。
+
+后台默认打开运营工作台，可从待办进入付款审核和服务履约，订单筛选支持 URL 保留。微信 0.01 元人工核账流程、界面变更与本地验证见 [本地操作记录](docs/verification/local-operations.md)。

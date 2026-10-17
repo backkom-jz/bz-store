@@ -291,3 +291,8 @@ Commit: `git add docs/operations/cloud-test-environment.md docs/verification/clo
 在 `feat/trade-regression` 基于 `878d6c2` 复用已审查的 `2e7975d` 基础设施，Task 1–4 的源码适配与本地完整检查已完成；保留当前 `0004_delivery.sql` 及新增交付能力，未混用另一分支的迁移。新增七项当前交付集成用例和三个桌面/移动浏览器场景，分别仅编译/类型检查。独立审查的三项 Important 已修正；详细证据与未执行边界见 [当前验收记录](../../verification/cloud-test-environment.md)。
 
 Task 5 仍待专用云端 SSH 与环境文件位置。Task 6 仍以前置云端验证通过为门槛，未修改 Docker 容器或卷。复用适配变更作为一个提交保存，避免为已实现的历史步骤重复建造代码。
+
+
+## 用户最新范围更新
+
+2026-10-17：用户明确不需要独立测试环境，只要求本地测试。Task 5 的云端执行不再是当前交付前置条件，也不再请求云端主机或账号。旧 Task 6 不在本轮执行，保留容器/卷不自动操作。支付只验证微信 0.01 元人工收款及后台核账流程，不接自动支付；转入后台操作体验改善，具体范围见 [本地记录](../../verification/local-operations.md)。历史计划留存，不把尚未执行的数据库/浏览器测试标为通过。

@@ -60,14 +60,16 @@ onMounted(() => void load());
     <h1>{{ order.item.product_title }}</h1>
     <p class="mono wrap">{{ order.order_no }}</p>
     <dl class="facts">
-      <dt>金额</dt>
+      <dt>商品类型</dt><dd>{{ statusLabel[order.item.product_type] || order.item.product_type }}</dd>
+      <dt>订单金额</dt>
       <dd>{{ money(order.amount_cents) }}</dd>
       <dt>创建时间</dt>
       <dd>{{ dateTime(order.created_at) }}</dd>
       <dt>付款期限</dt>
       <dd>{{ dateTime(order.expires_at) }}</dd>
     </dl>
-    <h2>付款凭证</h2>
+    <p v-if="order.status === 'pending_payment'" class="notice">等待用户转账并提交凭证；收到截图后仍需核对真实账单。</p><p v-else-if="order.status === 'payment_review'" class="notice">付款凭证已提交，请进入付款审核核对实际到账。</p><p v-else-if="order.status === 'fulfilling'" class="notice">收款已确认，请在服务工单中跟进交付与用户验收。</p>
+    <h2>付款凭证与审核记录</h2>
     <p v-if="!order.payments.length" class="muted">还没有提交凭证。</p>
     <ul v-else class="plain">
       <li v-for="payment in order.payments" :key="payment.id">
@@ -76,7 +78,7 @@ onMounted(() => void load());
         <p v-if="payment.review_note">{{ payment.review_note }}</p>
       </li>
     </ul>
-    <RouterLink v-if="order.status === 'payment_review'" class="btn" :to="{ path: '/payments', query: { q: order.order_no } }">去审核这笔订单</RouterLink>
+    <RouterLink v-if="order.status === 'payment_review'" class="btn" :to="{ path: '/payments', query: { q: order.order_no, status: 'pending' } }">去审核这笔订单</RouterLink>
     <form v-if="order.status === 'completed' || order.status === 'fulfilling'" class="stack" style="margin-top:24px" @submit.prevent="refund">
       <h2>登记整单退款</h2>
       <p class="muted">金额必须与订单一致。登记后权益立即失效，未完成工单会关闭。这里不发起转账。</p>

@@ -1,70 +1,39 @@
 <script setup lang="ts">
 import type { AdminPayment, Page } from '@devstore/shared-types';
 import { dateTime, money, statusLabel } from '@devstore/ui/format';
-import { onMounted, ref, watch } from 'vue';
-import { useRoute } from 'vue-router';
+import { ref } from 'vue';
+import { RouterLink } from 'vue-router';
 import ReviewPaymentDialog from '../components/ReviewPaymentDialog.vue';
-import { api } from '../session';
-
-const route = useRoute();
-const status = ref('pending');
-const q = ref(typeof route.query.q === 'string' ? route.query.q : '');
-const page = ref(1);
-const data = ref<Page<AdminPayment> | null>(null);
-const error = ref('');
-const pending = ref(false);
+import { useAdminList } from '../composables/useAdminList';
+const { q, status, page, data, error, pending, load, search, reset, goPage } = useAdminList<AdminPayment>('/admin/payments', 'pending');
 const notice = ref('');
 const selected = ref<AdminPayment | null>(null);
 
-async function load() {
-  pending.value = true;
-  error.value = '';
-  const params = new URLSearchParams({ page: String(page.value), page_size: '20' });
-  if (status.value) params.set('status', status.value);
-  if (q.value.trim()) params.set('q', q.value.trim());
-  try {
-    data.value = await api.request<Page<AdminPayment>>('/admin/payments?' + params);
-  } catch (reason) {
-    error.value = reason instanceof Error ? reason.message : '加载失败，请重试';
-  } finally {
-    pending.value = false;
-  }
-}
-
-function search() {
-  page.value = 1;
-  void load();
-}
-
 function onReviewed(kind: 'approved' | 'rejected') {
   selected.value = null;
-  notice.value = kind === 'approved' ? '已核实到账，教程已开通。' : '已驳回，用户可以重新提交凭证。';
+  notice.value = kind === 'approved' ? '已核实到账，订单已更新：教程与数字商品开通权益，服务订单进入工单交付。' : '已驳回，用户可查看原因后重新提交凭证。';
   void load();
 }
 
-watch(status, () => {
-  page.value = 1;
-  void load();
-});
-onMounted(() => void load());
 </script>
 
 <template>
   <header class="page-head">
-    <h1>付款审核</h1>
-    <p class="muted">对照凭证和真实到账记录。通过后才会开通教程。</p>
+    <p class="eyebrow">交易管理</p><h1>付款审核</h1>
+    <p class="muted">先核对真实收款账单，再批准开通或说明原因驳回。截图仅作核对线索。</p>
   </header>
-  <form class="toolbar" @submit.prevent="search">
-    <label class="sr-only" for="pay-q">搜索订单号或邮箱</label>
-    <input id="pay-q" v-model="q" placeholder="订单号或邮箱" maxlength="100">
-    <label class="sr-only" for="pay-status">审核状态</label>
-    <select id="pay-status" v-model="status">
+  <div class="payment-guidance"><span class="badge green">人工核账</span><p><strong>微信一分钱验证：</strong>订单应收与实际到账都应为 <strong>0.01 元</strong>。填写微信交易流水，核实后再批准；系统不会自动扣款。</p></div>
+  <form class="toolbar filter-panel" @submit.prevent="search">
+    <div class="filter-field grow"><label for="pay-q">搜索订单号或邮箱</label>
+    <input id="pay-q" v-model="q" placeholder="订单号或邮箱" maxlength="100"></div>
+    <div class="filter-field"><label for="pay-status">审核状态</label>
+    <select id="pay-status" v-model="status" @change="search">
       <option value="pending">待审核</option>
       <option value="approved">已通过</option>
       <option value="rejected">已驳回</option>
       <option value="">全部</option>
-    </select>
-    <button class="btn secondary" type="submit">搜索</button>
+    </select></div>
+    <button class="btn" type="submit">搜索</button><button class="btn secondary" type="button" @click="reset">重置</button>
   </form>
   <p v-if="notice" class="notice" role="status">{{ notice }}</p>
   <p v-if="pending" class="muted" role="status">正在加载…</p>
@@ -73,7 +42,8 @@ onMounted(() => void load());
     <button class="btn secondary small" type="button" @click="load">重试</button>
   </div>
   <template v-else-if="data">
-    <div v-if="data.items.length" class="table-wrap">
+    <div class="list-summary"><span>共 <strong>{{ data.total }}</strong> 条凭证</span><span class="muted">{{ statusLabel[status] || '全部状态' }} · 第 {{ page }} 页</span></div>
+    <div v-if="data.items.length" class="table-wrap panel-table">
       <table>
         <thead>
           <tr>
@@ -89,7 +59,7 @@ onMounted(() => void load());
           <tr v-for="payment in data.items" :key="payment.id">
             <td>
               <strong>{{ payment.product_title }}</strong>
-              <p class="mono wrap">{{ payment.order_no }}</p>
+              <p class="mono wrap">{{ payment.order_no }}</p><RouterLink class="text-link" :to="'/orders/' + payment.order_id">查看订单</RouterLink>
             </td>
             <td class="wrap">{{ payment.user_email }}</td>
             <td>{{ money(payment.amount_cents) }}</td>
@@ -105,9 +75,9 @@ onMounted(() => void load());
     </div>
     <div v-else class="empty"><h2>没有符合条件的凭证</h2><p>新的付款凭证提交后会出现在这里。</p></div>
     <div v-if="data.total > data.page_size" class="pagination">
-      <button class="btn secondary small" type="button" :disabled="page === 1" @click="page--; load()">上一页</button>
+      <button class="btn secondary small" type="button" :disabled="page === 1" @click="goPage(page - 1)">上一页</button>
       <span>{{ page }}</span>
-      <button class="btn secondary small" type="button" :disabled="page * data.page_size >= data.total" @click="page++; load()">下一页</button>
+      <button class="btn secondary small" type="button" :disabled="page * data.page_size >= data.total" @click="goPage(page + 1)">下一页</button>
     </div>
   </template>
   <ReviewPaymentDialog v-if="selected" :payment="selected" @close="selected = null" @reviewed="onReviewed" />

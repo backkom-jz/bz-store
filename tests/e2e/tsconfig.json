@@ -1,5 +1,15 @@
 {
   "extends": "../../packages/tsconfig.json",
-  "compilerOptions": { "types": ["node"], "noEmit": true },
-  "include": ["./**/*.ts", "../../playwright.config.ts"]
+  "compilerOptions": {
+    "types": [
+      "node"
+    ],
+    "noEmit": true
+  },
+  "include": [
+    "./**/*.ts",
+    "../../playwright.config.ts",
+    "../admin-ui/**/*.ts",
+    "../../playwright.admin.config.ts"
+  ]
 }

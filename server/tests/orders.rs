@@ -242,3 +242,68 @@ async fn it_free_checkout_and_cancel() {
         200
     );
 }
+
+#[tokio::test]
+async fn order_search_matches_snapshot_email_and_number_and_preserves_owner_scope() {
+    let app = TestApp::start().await;
+    let admin = app.admin().await;
+    let buyer = app.register_as("search-buyer@example.test").await;
+    let other = app.register().await;
+    let course = app.course(&admin, 0).await;
+    let order = app.order(&buyer, course.product).await;
+    let found = app
+        .request(
+            "GET",
+            "/api/v1/admin/orders?q=SEARCH-BUYER&page_size=1",
+            serde_json::Value::Null,
+            Some(&admin),
+            &[],
+        )
+        .await;
+    assert_eq!(found.status, 200, "{}", found.body);
+    assert_eq!(found.body["data"]["total"], 1);
+    assert_eq!(found.body["data"]["items"][0]["id"], order.to_string());
+    let title_query: String = url::form_urlencoded::byte_serialize("测试教程".as_bytes()).collect();
+    let by_title = app
+        .request(
+            "GET",
+            &format!("/api/v1/admin/orders?q={title_query}"),
+            serde_json::Value::Null,
+            Some(&admin),
+            &[],
+        )
+        .await;
+    assert_eq!(by_title.body["data"]["total"], 1);
+    assert_eq!(by_title.body["data"]["items"][0]["id"], order.to_string());
+    let order_no = found.body["data"]["items"][0]["order_no"].as_str().unwrap();
+    let by_number = app
+        .request(
+            "GET",
+            &format!("/api/v1/admin/orders?q={order_no}&status=completed"),
+            serde_json::Value::Null,
+            Some(&admin),
+            &[],
+        )
+        .await;
+    assert_eq!(by_number.body["data"]["total"], 1);
+    let own = app
+        .request(
+            "GET",
+            "/api/v1/orders?q=search-buyer",
+            serde_json::Value::Null,
+            Some(&other),
+            &[],
+        )
+        .await;
+    assert_eq!(own.body["data"]["total"], 0);
+    for path in [
+        "/api/v1/admin/orders?q=%25",
+        "/api/v1/admin/orders?q=search-buyer&status=fulfilling",
+    ] {
+        let empty = app
+            .request("GET", path, serde_json::Value::Null, Some(&admin), &[])
+            .await;
+        assert_eq!(empty.body["data"]["total"], 0, "{}", empty.body);
+        assert_eq!(empty.body["data"]["items"], serde_json::json!([]));
+    }
+}

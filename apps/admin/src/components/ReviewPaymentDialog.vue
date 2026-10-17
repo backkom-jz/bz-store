@@ -10,7 +10,7 @@ const emit = defineEmits<{ close: []; reviewed: [kind: 'approved' | 'rejected'] 
 
 const dialog = ref<HTMLDialogElement | null>(null);
 const amount = ref('');
-const channel = ref('');
+const channel = ref(props.payment.payment_channel_expected);
 const reference = ref('');
 const confirmed = ref(false);
 const reason = ref('');
@@ -18,7 +18,7 @@ const busy = ref(false);
 const error = ref('');
 const proofUrl = ref('');
 const proofError = ref('');
-const settled = ref('');
+const settled = ref(props.payment.status === 'pending' ? '' : statusLabel[props.payment.status] || props.payment.status);
 const channels: Record<string, string> = { bank: '银行转账', wechat: '微信收款', alipay: '支付宝收款' };
 
 const canApprove = computed(() => canSubmitApproval({
@@ -26,7 +26,13 @@ const canApprove = computed(() => canSubmitApproval({
   channel: channel.value,
   reference: reference.value,
   confirmed: confirmed.value,
+  expectedAmountCents: props.payment.amount_cents,
+  expectedChannel: props.payment.payment_channel_expected,
 }) && !settled.value && !busy.value);
+
+const approvalAmountMismatch = computed(() => {
+  try { return approvalCents(amount.value) !== props.payment.amount_cents; } catch { return true; }
+});
 
 async function loadProof() {
   proofError.value = '';
@@ -91,6 +97,7 @@ async function reject() {
 }
 
 function close() {
+  if (busy.value) return;
   emit('close');
 }
 
@@ -129,6 +136,7 @@ onBeforeUnmount(() => {
         <p v-if="payment.overdue" class="badge amber">超过 24 小时未审核</p>
         <p v-if="settled" class="notice" role="status">这张凭证已经是「{{ settled }}」，不能再次提交。</p>
         <p v-if="error" class="error" role="alert">{{ error }}</p>
+        <div class="review-checklist"><strong>核账步骤</strong><ol><li>在微信等收款账单核对实际到账。</li><li>填写实际金额与交易流水。</li><li>确认金额、渠道与订单一致后批准。</li></ol><p>一分钱验证填写 0.01 元；本系统不会自动扣款。</p></div>
         <form @submit.prevent="approve">
           <div class="field">
             <label for="actual-amount">实际到账金额（元）</label>
@@ -151,6 +159,8 @@ onBeforeUnmount(() => {
             <input id="confirmed" v-model="confirmed" type="checkbox" :disabled="!!settled || busy">
             已核实真实收款记录
           </label>
+          <p v-if="amount && approvalAmountMismatch" class="field-error" role="status">实际金额应与订单金额 {{ money(payment.amount_cents) }} 一致，金额不符请核对或驳回。</p>
+          <p v-if="channel && channel !== payment.payment_channel_expected" class="field-error" role="status">收款渠道与订单不一致，请核对后处理。</p>
           <button class="btn" type="submit" :disabled="!canApprove">确认到账并开通</button>
         </form>
         <form class="reject" @submit.prevent="reject">
@@ -160,7 +170,7 @@ onBeforeUnmount(() => {
           </div>
           <button class="btn danger" type="submit" :disabled="!reason.trim() || !!settled || busy">驳回凭证</button>
         </form>
-        <button class="btn secondary" type="button" @click="close">关闭</button>
+        <button class="btn secondary" type="button" :disabled="busy" @click="close">关闭</button>
       </div>
     </div>
   </dialog>
